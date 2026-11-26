@@ -13,7 +13,7 @@ acrylic or tinted, and switch looks automatically based on what's on screen.
 
 ## Status
 
-Early development: Phase 0 (foundation) done. Roadmap: [`docs/PLAN.md`](docs/PLAN.md).
+Early development: Phase 0 (foundation) and Phase 1 (research) done. Roadmap: [`docs/PLAN.md`](docs/PLAN.md).
 
 ## Build from source
 
