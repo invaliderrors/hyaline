@@ -1,4 +1,27 @@
 #[inline]
+pub unsafe fn CloseHandle(hobject: HANDLE) -> windows_core::BOOL {
+    windows_core::link!("kernel32.dll" "system" fn CloseHandle(hobject : HANDLE) -> windows_core::BOOL);
+    unsafe { CloseHandle(hobject) }
+}
+#[inline]
+pub unsafe fn CreateMutexW<P2>(
+    lpmutexattributes: Option<*const SECURITY_ATTRIBUTES>,
+    binitialowner: bool,
+    lpname: P2,
+) -> HANDLE
+where
+    P2: windows_core::Param<windows_core::PCWSTR>,
+{
+    windows_core::link!("kernel32.dll" "system" fn CreateMutexW(lpmutexattributes : *const SECURITY_ATTRIBUTES, binitialowner : windows_core::BOOL, lpname : windows_core::PCWSTR) -> HANDLE);
+    unsafe {
+        CreateMutexW(
+            lpmutexattributes.unwrap_or(core::mem::zeroed()) as _,
+            binitialowner.into(),
+            lpname.param().abi(),
+        )
+    }
+}
+#[inline]
 pub unsafe fn CreateWindowExW<P1, P2>(
     dwexstyle: u32,
     lpclassname: P1,
@@ -81,6 +104,11 @@ pub unsafe fn FreeLibrary(hlibmodule: HMODULE) -> windows_core::BOOL {
     unsafe { FreeLibrary(hlibmodule) }
 }
 #[inline]
+pub unsafe fn GetLastError() -> u32 {
+    windows_core::link!("kernel32.dll" "system" fn GetLastError() -> u32);
+    unsafe { GetLastError() }
+}
+#[inline]
 pub unsafe fn GetMessageW(
     lpmsg: *mut MSG,
     hwnd: Option<HWND>,
@@ -119,12 +147,25 @@ pub unsafe fn GetWindowThreadProcessId(hwnd: HWND, lpdwprocessid: Option<*mut u3
     unsafe { GetWindowThreadProcessId(hwnd, lpdwprocessid.unwrap_or(core::mem::zeroed()) as _) }
 }
 #[inline]
+pub unsafe fn KillTimer(hwnd: Option<HWND>, uidevent: usize) -> windows_core::BOOL {
+    windows_core::link!("user32.dll" "system" fn KillTimer(hwnd : HWND, uidevent : usize) -> windows_core::BOOL);
+    unsafe { KillTimer(hwnd.unwrap_or(core::mem::zeroed()) as _, uidevent) }
+}
+#[inline]
 pub unsafe fn LoadLibraryW<P0>(lplibfilename: P0) -> HMODULE
 where
     P0: windows_core::Param<windows_core::PCWSTR>,
 {
     windows_core::link!("kernel32.dll" "system" fn LoadLibraryW(lplibfilename : windows_core::PCWSTR) -> HMODULE);
     unsafe { LoadLibraryW(lplibfilename.param().abi()) }
+}
+#[inline]
+pub unsafe fn OpenEventW<P2>(dwdesiredaccess: u32, binherithandle: bool, lpname: P2) -> HANDLE
+where
+    P2: windows_core::Param<windows_core::PCWSTR>,
+{
+    windows_core::link!("kernel32.dll" "system" fn OpenEventW(dwdesiredaccess : u32, binherithandle : windows_core::BOOL, lpname : windows_core::PCWSTR) -> HANDLE);
+    unsafe { OpenEventW(dwdesiredaccess, binherithandle.into(), lpname.param().abi()) }
 }
 #[inline]
 pub unsafe fn RegisterClassW(lpwndclass: *const WNDCLASSW) -> ATOM {
@@ -163,6 +204,23 @@ pub unsafe fn SendMessageTimeoutW(
     }
 }
 #[inline]
+pub unsafe fn SetTimer(
+    hwnd: Option<HWND>,
+    nidevent: usize,
+    uelapse: u32,
+    lptimerfunc: TIMERPROC,
+) -> usize {
+    windows_core::link!("user32.dll" "system" fn SetTimer(hwnd : HWND, nidevent : usize, uelapse : u32, lptimerfunc : TIMERPROC) -> usize);
+    unsafe {
+        SetTimer(
+            hwnd.unwrap_or(core::mem::zeroed()) as _,
+            nidevent,
+            uelapse,
+            lptimerfunc,
+        )
+    }
+}
+#[inline]
 pub unsafe fn TranslateMessage(lpmsg: *const MSG) -> windows_core::BOOL {
     windows_core::link!("user32.dll" "system" fn TranslateMessage(lpmsg : *const MSG) -> windows_core::BOOL);
     unsafe { TranslateMessage(lpmsg) }
@@ -170,8 +228,13 @@ pub unsafe fn TranslateMessage(lpmsg: *const MSG) -> windows_core::BOOL {
 #[repr(transparent)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
 pub struct ATOM(pub u16);
+pub const ERROR_ALREADY_EXISTS: i32 = 183;
+pub const ERROR_NOT_FOUND: i32 = 1168;
 pub const E_FAIL: windows_core::HRESULT = windows_core::HRESULT(0x80004005_u32 as _);
 pub type FARPROC = Option<unsafe extern "system" fn() -> isize>;
+#[repr(transparent)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
+pub struct HANDLE(pub *mut core::ffi::c_void);
 #[repr(transparent)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
 pub struct HBRUSH(pub *mut core::ffi::c_void);
@@ -212,7 +275,18 @@ pub struct POINT {
     pub x: i32,
     pub y: i32,
 }
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub struct SECURITY_ATTRIBUTES {
+    pub nLength: u32,
+    pub lpSecurityDescriptor: *mut core::ffi::c_void,
+    pub bInheritHandle: windows_core::BOOL,
+}
 pub const SMTO_ABORTIFHUNG: i32 = 2;
+pub const SYNCHRONIZE: i32 = 1048576;
+pub type TIMERPROC =
+    Option<unsafe extern "system" fn(param0: HWND, param1: u32, param2: usize, param3: u32)>;
+pub const WM_TIMER: i32 = 275;
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Default)]
 pub struct WNDCLASSW {
