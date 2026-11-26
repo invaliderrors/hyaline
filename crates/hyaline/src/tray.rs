@@ -13,7 +13,20 @@ use crate::bindings::{
 };
 use hyaline_core::appearance::{Mode, Rgb};
 use hyaline_core::states::{Looks, Situation, Toggled};
+use std::cell::RefCell;
 use windows_core::{HSTRING, PCWSTR, w};
+
+/// A notice waiting for the icon to exist.
+struct Notice {
+    title: String,
+    text: String,
+    warning: bool,
+}
+
+thread_local! {
+    /// Notices raised while the icon could not be shown (taskbar not up yet), shown once it is.
+    static PENDING: RefCell<Vec<Notice>> = const { RefCell::new(Vec::new()) };
+}
 
 /// Message the shell sends to our window for icon clicks.
 pub const MESSAGE: u32 = WM_APP.cast_unsigned() + 1;
@@ -152,6 +165,11 @@ pub fn add(hwnd: HWND) -> bool {
         // SAFETY: loaded above and no longer needed.
         let _ = unsafe { DestroyIcon(HICON(icon.0)) };
     }
+    if added {
+        for notice in PENDING.take() {
+            notify(hwnd, &notice.title, &notice.text, notice.warning);
+        }
+    }
     added
 }
 
@@ -177,7 +195,7 @@ pub fn activation(wparam: usize, lparam: isize) -> Option<POINT> {
     })
 }
 
-/// Shows a notification from the icon.
+/// Shows a notification from the icon, or once the icon is added if it is not there yet.
 pub fn notify(hwnd: HWND, title: &str, text: &str, warning: bool) {
     let mut data = icon_data(hwnd);
     data.uFlags = NIF_INFO.cast_unsigned();
@@ -185,7 +203,15 @@ pub fn notify(hwnd: HWND, title: &str, text: &str, warning: bool) {
     copy_text(&mut data.szInfoTitle, title);
     copy_text(&mut data.szInfo, text);
     // SAFETY: `data` is fully initialized.
-    let _ = unsafe { Shell_NotifyIconW(NIM_MODIFY.cast_unsigned(), &raw const data) };
+    if !unsafe { Shell_NotifyIconW(NIM_MODIFY.cast_unsigned(), &raw const data) }.as_bool() {
+        PENDING.with_borrow_mut(|pending| {
+            pending.push(Notice {
+                title: title.to_owned(),
+                text: text.to_owned(),
+                warning,
+            });
+        });
+    }
 }
 
 /// The user's "Transparency effects" setting (on when it cannot be read).
