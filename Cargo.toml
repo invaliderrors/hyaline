@@ -11,3 +11,11 @@ license = "MIT"
 [workspace.lints.clippy]
 pedantic = { level = "warn", priority = -1 }
 undocumented_unsafe_blocks = "warn"
+
+# The helper DLL's `guard` relies on `catch_unwind`, so panics keep unwinding.
+[profile.release]
+codegen-units = 1
+lto = true
+# Size over speed: the work per event is tiny (measured: 650 KB vs 736 KB total at level 3).
+opt-level = "s"
+strip = true
