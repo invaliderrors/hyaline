@@ -20,7 +20,7 @@ based on what's on screen.
 
 ## Status
 
-Early development: Phases 0–4 done (foundation, research, Explorer helper, clear taskbar, tray and settings). Roadmap: [`docs/PLAN.md`](docs/PLAN.md).
+Early development: Phases 0–5 done (foundation, research, Explorer helper, clear taskbar, tray and settings, dynamic looks). Roadmap: [`docs/PLAN.md`](docs/PLAN.md).
 
 ## Usage
 

@@ -76,7 +76,7 @@ script changes only its own state; situations were configured through `config.to
 | T27 | Window classification on a real desktop | Minimized, cloaked, tool, owned and shell windows ignored | pass (checked against an independent script) |
 | T31 | Hyaline's window DPI awareness | Per-monitor (2) | pass |
 | T32 | Debug build logging each recompute; test window changes 5 times | A few coalesced recomputes, none while idle | pass (7 for 5 changes; 1 in 10 s of user activity) |
-| T28 | Show desktop (Win+D), then bring windows back | Desktop look, then the window situation's look | **owner check** |
-| T29 | Turn on Start menu / Search / Task View looks in the menu; open each; also Alt+Tab with the Task View look on | Their looks while open; previous look after closing; Alt+Tab does not show the Task View look | **owner check** |
-| T33 | Default settings, desktop with no maximized window: open the emoji panel (Win+.) or clipboard (Win+V) | Look does not change | **owner check** |
-| T30 | Menu: a situation's submenu — On, Appearance, Color…, Opacity | Changes apply and persist | **owner check** |
+| T28 | Show desktop (Win+D), then bring windows back | Desktop look, then the window situation's look | pass (owner, 2026-11-25) |
+| T29 | Turn on Start menu / Search / Task View looks in the menu; open each; also Alt+Tab with the Task View look on | Their looks while open; previous look after closing; Alt+Tab does not show the Task View look | pass (owner, 2026-11-25) |
+| T33 | Default settings, desktop with no maximized window: open the emoji panel (Win+.) or clipboard (Win+V) | Look does not change | pass (owner, 2026-11-25) |
+| T30 | Menu: a situation's submenu — On, Appearance, Color…, Opacity | Changes apply and persist | pass (owner, 2026-11-25) |

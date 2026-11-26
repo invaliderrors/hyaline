@@ -9,6 +9,6 @@ Design: [`superpowers/specs/2026-11-25-hyaline-design.md`](superpowers/specs/202
 | 2 | Explorer helper | done |
 | 3 | Core effect | done |
 | 4 | Tray + config | done |
-| 5 | Dynamic states | in review (owner checks) |
+| 5 | Dynamic states | done |
 | 6 | Hardening + performance | not started |
 | 7 | Release 1.0 | not started |
