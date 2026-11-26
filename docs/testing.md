@@ -115,4 +115,4 @@ Last run: 2026-11-26, same machine, fresh Explorer.
 | T50 | Start the release build | Explorer loads `%LOCALAPPDATA%\Hyaline\hyaline_tap-<hash>.dll`, not the file in the install folder | pass |
 | T51 | Exit, then delete the install folder while Explorer runs | Folder deleted | pass |
 | T52 | Start a different build (other helper bytes), then the first build again | The copy Explorer uses is kept; the other build's copy is added, then removed by the next start | pass |
-| T53 | Download the published zip, compare `Get-FileHash` with `SHA256SUMS.txt`, extract, run | Hashes equal; Hyaline starts and applies the look | pending (after the tag) |
+| T53 | Download the published zip, compare `Get-FileHash` with `SHA256SUMS.txt`, extract, run | Hashes equal; Hyaline starts and applies the look | pass (checksum equal; provenance verified for `refs/tags/v1.0.0`) |
