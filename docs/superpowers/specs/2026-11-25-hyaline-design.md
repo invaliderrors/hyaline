@@ -112,6 +112,19 @@ Visible window → Desktop. A disabled state falls through to the next.
   `Windows.UI.Core.CoreWindow` while launcher not visible; Task View = foreground
   `XamlExplorerHostIslandWindow` in `explorer.exe`.
 
+**Binding rules from Phase 6:**
+- Talk only to helpers that answer `PROTOCOL_VERSION`; bump it whenever a command changes meaning.
+  An older helper still loaded in Explorer is left alone with one notice to restart Explorer.
+- The helper posts `HELPER_READY` to the host window whenever one of its windows is created; the
+  host applies the look then (the timed check is only a fallback).
+- High contrast on: every taskbar gets Windows' own look and the helper is not loaded.
+- Three Explorer restarts within two minutes while the helper was loaded: stop loading it until a
+  setting changes.
+- Known limits: background hiding is global (all taskbars or none), so a taskbar resolving to
+  Windows' look while another does not gets Explorer's accent over a hidden background; per-monitor
+  hiding is deferred past 1.0 (needs a protocol change and a two-monitor test). Location-change
+  events include every cursor move, which costs about 0.5–1 % of one core while the mouse moves.
+
 ## 6. Performance budgets (targets, measured in Phase 6)
 
 | Metric | Target |

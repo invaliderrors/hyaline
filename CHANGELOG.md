@@ -9,6 +9,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Hyaline steps aside in high contrast (Windows' own taskbar) and comes back when it is off.
+- Crash-loop protection: if Explorer restarts three times within two minutes with the helper
+  loaded, Hyaline pauses and says so; changing any setting resumes.
+- Updates are safe while an older helper is still loaded in Explorer: Hyaline leaves it alone
+  and asks for an Explorer restart.
+- The look is re-applied after resume from sleep and on a newly created taskbar (monitor
+  plugged in).
+- Measured performance: the look is applied 20–35 ms after start, a state switch takes a few
+  milliseconds, and the release binaries total about 640 KB (see `docs/testing.md`).
 - Project skeleton: cargo workspace, CI, MIT license.
 - Dynamic looks: Start menu, Search, Task View, Maximized window, Visible window and Desktop,
   each with its own look and on/off, resolved per monitor with zero idle CPU.
