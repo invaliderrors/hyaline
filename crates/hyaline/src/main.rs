@@ -34,9 +34,9 @@ static TASKBAR_CREATED: AtomicU32 = AtomicU32::new(0);
 /// Retries of loading the helper since the last success or Explorer start.
 static ATTEMPT: AtomicU32 = AtomicU32::new(0);
 const RETRY_TIMER: usize = 1;
-/// One-shot timer that re-applies the accent after Explorer has re-applied its own.
-const REAPPLY_TIMER: usize = 2;
-const REAPPLY_DELAY_MS: u32 = 250;
+/// One-shot timers that re-apply the accent after Explorer has re-applied its own: a quick
+/// one, and a late one for when Explorer is busy and its own re-apply lands later.
+const REAPPLY_TIMERS: [(usize, u32); 2] = [(2, 250), (3, 1500)];
 const APPEARANCE: Appearance = Appearance::Clear;
 
 /// Outcome of [`ensure_tap`].
@@ -214,16 +214,18 @@ unsafe extern "system" fn window_proc(
             try_load(hwnd);
             return LRESULT(0);
         }
-        WM_TIMER if wparam.0 == REAPPLY_TIMER => {
+        WM_TIMER if REAPPLY_TIMERS.iter().any(|&(id, _)| id == wparam.0) => {
             // SAFETY: our own window and timer id.
-            let _ = unsafe { KillTimer(Some(hwnd), REAPPLY_TIMER) };
+            let _ = unsafe { KillTimer(Some(hwnd), wparam.0) };
             reapply();
             return LRESULT(0);
         }
         // Explorer re-applies its own accent on these; ours must land after it.
         WM_DWMCOMPOSITIONCHANGED | WM_THEMECHANGED | WM_SETTINGCHANGE | WM_DISPLAYCHANGE => {
-            // SAFETY: our own window; re-arming an existing timer just restarts it.
-            unsafe { SetTimer(Some(hwnd), REAPPLY_TIMER, REAPPLY_DELAY_MS, None) };
+            for (id, delay) in REAPPLY_TIMERS {
+                // SAFETY: our own window; re-arming an existing timer just restarts it.
+                unsafe { SetTimer(Some(hwnd), id, delay, None) };
+            }
         }
         _ => {}
     }
