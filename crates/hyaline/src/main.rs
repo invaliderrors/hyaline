@@ -1,12 +1,14 @@
 //! Hyaline: a tiny, fast Windows 11 taskbar customizer.
 //!
-//! Phase 2: loads the Explorer helper and keeps the taskbar background cleared, including
-//! after Explorer restarts. The helper restores the taskbar when this process exits.
+//! Makes every taskbar clear: applies a transparent accent to the taskbar windows and has
+//! the Explorer helper hide their XAML background, keeping both in place across theme,
+//! display and Explorer restarts. The helper restores the taskbar when this process exits.
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 #[rustfmt::skip]
 #[allow(clippy::all, clippy::pedantic, clippy::undocumented_unsafe_blocks, nonstandard_style, dead_code)]
 mod bindings;
+mod effect;
 mod explorer;
 mod inject;
 mod tap_client;
@@ -15,8 +17,10 @@ use bindings::{
     CreateMutexW, CreateWindowExW, DefWindowProcW, DispatchMessageW, ERROR_ALREADY_EXISTS,
     ERROR_NOT_FOUND, GetLastError, GetMessageW, GetModuleHandleW, HINSTANCE, HWND, KillTimer,
     LPARAM, LRESULT, MSG, RegisterClassW, RegisterWindowMessageW, SetTimer, TranslateMessage,
-    WM_TIMER, WNDCLASSW, WPARAM,
+    WM_DISPLAYCHANGE, WM_DWMCOMPOSITIONCHANGED, WM_SETTINGCHANGE, WM_THEMECHANGED, WM_TIMER,
+    WNDCLASSW, WPARAM,
 };
+use hyaline_core::appearance::Appearance;
 use hyaline_core::tap::{Command, INSTANCE_MUTEX, InitData, retry_delay_ms};
 use std::error::Error;
 use std::path::{Path, PathBuf};
@@ -30,6 +34,10 @@ static TASKBAR_CREATED: AtomicU32 = AtomicU32::new(0);
 /// Retries of loading the helper since the last success or Explorer start.
 static ATTEMPT: AtomicU32 = AtomicU32::new(0);
 const RETRY_TIMER: usize = 1;
+/// One-shot timer that re-applies the accent after Explorer has re-applied its own.
+const REAPPLY_TIMER: usize = 2;
+const REAPPLY_DELAY_MS: u32 = 250;
+const APPEARANCE: Appearance = Appearance::Clear;
 
 /// Outcome of [`ensure_tap`].
 enum Ensure {
@@ -68,6 +76,8 @@ fn run() -> Result<(), Box<dyn Error>> {
     let taskbar_created = unsafe { RegisterWindowMessageW(w!("TaskbarCreated")) };
     TASKBAR_CREATED.store(taskbar_created, Ordering::Relaxed);
     let listener = create_listener_window()?;
+    // Accent first: hiding the XAML background before it would flash black.
+    effect::apply(APPEARANCE)?;
     if let Ensure::NotReady = ensure_tap(dll)? {
         schedule_retry(listener);
     }
@@ -121,10 +131,17 @@ fn try_load(listener: HWND) {
     let Some(dll) = TAP_DLL.get() else {
         return;
     };
+    reapply();
     match ensure_tap(dll) {
         Ok(Ensure::Done) => ATTEMPT.store(0, Ordering::Relaxed),
         Ok(Ensure::NotReady) => schedule_retry(listener),
         Err(error) => eprintln!("hyaline: loading the helper failed: {error}"),
+    }
+}
+
+fn reapply() {
+    if let Err(error) = effect::apply(APPEARANCE) {
+        eprintln!("hyaline: applying the taskbar effect failed: {error}");
     }
 }
 
@@ -189,12 +206,26 @@ unsafe extern "system" fn window_proc(
         try_load(hwnd);
         return LRESULT(0);
     }
-    #[allow(clippy::cast_sign_loss)] // WM_TIMER is a positive message id
-    if msg == WM_TIMER as u32 && wparam.0 == RETRY_TIMER {
-        // SAFETY: our own window and timer id.
-        let _ = unsafe { KillTimer(Some(hwnd), RETRY_TIMER) };
-        try_load(hwnd);
-        return LRESULT(0);
+    // Generated message constants are i32; real message ids are small positive values.
+    match msg.cast_signed() {
+        WM_TIMER if wparam.0 == RETRY_TIMER => {
+            // SAFETY: our own window and timer id.
+            let _ = unsafe { KillTimer(Some(hwnd), RETRY_TIMER) };
+            try_load(hwnd);
+            return LRESULT(0);
+        }
+        WM_TIMER if wparam.0 == REAPPLY_TIMER => {
+            // SAFETY: our own window and timer id.
+            let _ = unsafe { KillTimer(Some(hwnd), REAPPLY_TIMER) };
+            reapply();
+            return LRESULT(0);
+        }
+        // Explorer re-applies its own accent on these; ours must land after it.
+        WM_DWMCOMPOSITIONCHANGED | WM_THEMECHANGED | WM_SETTINGCHANGE | WM_DISPLAYCHANGE => {
+            // SAFETY: our own window; re-arming an existing timer just restarts it.
+            unsafe { SetTimer(Some(hwnd), REAPPLY_TIMER, REAPPLY_DELAY_MS, None) };
+        }
+        _ => {}
     }
     // SAFETY: the unmodified message goes to the default procedure.
     unsafe { DefWindowProcW(hwnd, msg, wparam, lparam) }
