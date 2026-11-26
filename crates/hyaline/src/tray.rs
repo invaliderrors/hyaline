@@ -11,7 +11,8 @@ use crate::bindings::{
     Shell_NotifyIconW, TPM_RETURNCMD, TPM_RIGHTBUTTON, TrackPopupMenu, WM_APP, WM_CONTEXTMENU,
     WM_NULL, WPARAM,
 };
-use hyaline_core::appearance::{Appearance, Mode, Rgb};
+use hyaline_core::appearance::{Mode, Rgb};
+use hyaline_core::states::{Looks, Situation, Toggled};
 use windows_core::{HSTRING, PCWSTR, w};
 
 /// Message the shell sends to our window for icon clicks.
@@ -26,19 +27,80 @@ const MODES: [(Mode, &str); 5] = [
     (Mode::Acrylic, "Acrylic"),
 ];
 const OPACITIES: [u8; 5] = [0, 25, 50, 75, 100];
-const ID_MODE: usize = 100;
-const ID_COLOR: usize = 200;
-const ID_OPACITY: usize = 300;
-const ID_AUTOSTART: usize = 400;
-const ID_EXIT: usize = 500;
+
+/// Situations in menu order, with their labels.
+const SITUATIONS: [(Situation, &str); 6] = [
+    (Situation::Desktop, "Desktop"),
+    (Situation::VisibleWindow, "Visible window"),
+    (Situation::MaximizedWindow, "Maximized window"),
+    (Situation::Start, "Start menu"),
+    (Situation::Search, "Search"),
+    (Situation::TaskView, "Task View"),
+];
 
 /// What the user picked in the menu.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Choice {
-    Mode(Mode),
-    Color,
-    Opacity(u8),
+    Toggle(Situation),
+    Mode(Situation, Mode),
+    Color(Situation),
+    Opacity(Situation, u8),
     Autostart,
     Exit,
+}
+
+// Menu ids: 1000 + situation * 100 + item; global items above 9000.
+const ID_SITUATIONS: usize = 1000;
+const ITEM_TOGGLE: usize = 0;
+const ITEM_MODE: usize = 10;
+const ITEM_COLOR: usize = 20;
+const ITEM_OPACITY: usize = 30;
+const ID_AUTOSTART: usize = 9000;
+const ID_EXIT: usize = 9001;
+
+/// The menu id for `choice`.
+fn encode(choice: Choice) -> usize {
+    let situation_base = |situation: Situation| {
+        let index = SITUATIONS
+            .iter()
+            .position(|(s, _)| *s == situation)
+            .unwrap_or(0);
+        ID_SITUATIONS + index * 100
+    };
+    let mode_index = |mode: Mode| MODES.iter().position(|(m, _)| *m == mode).unwrap_or(0);
+    let opacity_index = |opacity: u8| OPACITIES.iter().position(|o| *o == opacity).unwrap_or(0);
+    match choice {
+        Choice::Toggle(situation) => situation_base(situation) + ITEM_TOGGLE,
+        Choice::Mode(situation, mode) => situation_base(situation) + ITEM_MODE + mode_index(mode),
+        Choice::Color(situation) => situation_base(situation) + ITEM_COLOR,
+        Choice::Opacity(situation, opacity) => {
+            situation_base(situation) + ITEM_OPACITY + opacity_index(opacity)
+        }
+        Choice::Autostart => ID_AUTOSTART,
+        Choice::Exit => ID_EXIT,
+    }
+}
+
+/// The choice for a menu id (`None` for cancel or unknown ids).
+fn decode(id: usize) -> Option<Choice> {
+    match id {
+        ID_AUTOSTART => return Some(Choice::Autostart),
+        ID_EXIT => return Some(Choice::Exit),
+        _ => {}
+    }
+    let situation = SITUATIONS.get(id.checked_sub(ID_SITUATIONS)? / 100)?.0;
+    let item = (id - ID_SITUATIONS) % 100;
+    match item {
+        ITEM_TOGGLE => Some(Choice::Toggle(situation)),
+        ITEM_COLOR => Some(Choice::Color(situation)),
+        _ if (ITEM_MODE..ITEM_MODE + MODES.len()).contains(&item) => {
+            Some(Choice::Mode(situation, MODES[item - ITEM_MODE].0))
+        }
+        _ if (ITEM_OPACITY..ITEM_OPACITY + OPACITIES.len()).contains(&item) => {
+            Some(Choice::Opacity(situation, OPACITIES[item - ITEM_OPACITY]))
+        }
+        _ => None,
+    }
 }
 
 fn icon_data(hwnd: HWND) -> NOTIFYICONDATAW {
@@ -156,79 +218,27 @@ fn index_u32(index: usize) -> u32 {
 }
 
 /// Shows the menu at `anchor` and returns what the user picked.
-pub fn show_menu(
-    hwnd: HWND,
-    anchor: POINT,
-    current: &Appearance,
-    autostart: bool,
-) -> Option<Choice> {
+pub fn show_menu(hwnd: HWND, anchor: POINT, looks: &Looks, autostart: bool) -> Option<Choice> {
     let effects_on = transparency_effects_on();
-    // SAFETY: plain menu creation; every menu is destroyed below (submenus with their parent).
-    let (menu, modes, opacities) =
-        unsafe { (CreatePopupMenu(), CreatePopupMenu(), CreatePopupMenu()) };
-    for (i, (mode, label)) in MODES.iter().enumerate() {
-        let needs_effects = matches!(mode, Mode::Blur | Mode::Acrylic) && !effects_on;
-        let label = if needs_effects {
-            format!("{label} (needs Transparency effects)")
-        } else {
-            (*label).to_string()
-        };
-        append(modes, MF_STRING, ID_MODE + i, &label);
+    // SAFETY: plain menu creation; destroying the top menu also destroys its submenus.
+    let menu = unsafe { CreatePopupMenu() };
+    for (situation, label) in SITUATIONS {
+        let submenu = situation_menu(situation, looks.toggled(situation), effects_on);
+        append(menu, MF_POPUP, submenu.0 as usize, label);
     }
-    if let Some(current_index) = MODES.iter().position(|(m, _)| *m == current.mode) {
-        let first = index_u32(ID_MODE);
-        // SAFETY: the ids exist in `modes`.
-        let _ = unsafe {
-            CheckMenuRadioItem(
-                modes,
-                first,
-                first + index_u32(MODES.len() - 1),
-                first + index_u32(current_index),
-                MF_BYCOMMAND.cast_unsigned(),
-            )
-        };
-    }
-    for (i, opacity) in OPACITIES.iter().enumerate() {
-        let checked = if *opacity == current.opacity {
-            MF_CHECKED
-        } else {
-            0
-        };
-        append(
-            opacities,
-            MF_STRING | checked,
-            ID_OPACITY + i,
-            &format!("{opacity}%"),
-        );
-    }
-    let tinted = !matches!(current.mode, Mode::Normal);
-    let has_opacity = !matches!(current.mode, Mode::Normal | Mode::Opaque);
-    let grayed = |enabled: bool| if enabled { 0 } else { MF_GRAYED };
-    append(menu, MF_POPUP, modes.0 as usize, "Appearance");
-    append(
-        menu,
-        MF_STRING | grayed(tinted),
-        ID_COLOR,
-        &format!("Color… ({})", current.color),
-    );
-    append(
-        menu,
-        MF_POPUP | grayed(has_opacity),
-        opacities.0 as usize,
-        "Opacity",
-    );
     append(menu, MF_SEPARATOR, 0, "");
+    let checked = if autostart { MF_CHECKED } else { 0 };
     append(
         menu,
-        MF_STRING | if autostart { MF_CHECKED } else { 0 },
+        MF_STRING | checked,
         ID_AUTOSTART,
         "Start with Windows",
     );
     append(menu, MF_SEPARATOR, 0, "");
     append(menu, MF_STRING, ID_EXIT, "Exit");
 
-    // SAFETY: our own window and menu. SetForegroundWindow and the trailing
-    // WM_NULL are the documented way to make tray menus close when clicking elsewhere.
+    // SAFETY: our own window and menu. SetForegroundWindow and the trailing WM_NULL are the
+    // documented way to make tray menus close when clicking elsewhere.
     let picked = unsafe {
         let _ = SetForegroundWindow(hwnd);
         let picked = TrackPopupMenu(
@@ -244,19 +254,77 @@ pub fn show_menu(
         let _ = DestroyMenu(menu);
         picked
     };
-    let id = usize::try_from(picked.0).ok()?;
-    match id {
-        ID_COLOR => Some(Choice::Color),
-        ID_AUTOSTART => Some(Choice::Autostart),
-        ID_EXIT => Some(Choice::Exit),
-        _ if (ID_MODE..ID_MODE + MODES.len()).contains(&id) => {
-            Some(Choice::Mode(MODES[id - ID_MODE].0))
-        }
-        _ if (ID_OPACITY..ID_OPACITY + OPACITIES.len()).contains(&id) => {
-            Some(Choice::Opacity(OPACITIES[id - ID_OPACITY]))
-        }
-        _ => None,
+    decode(usize::try_from(picked.0).ok()?)
+}
+
+/// One situation's submenu: On (except Desktop), Appearance, Color…, Opacity.
+fn situation_menu(situation: Situation, toggled: Toggled, effects_on: bool) -> HMENU {
+    // SAFETY: plain menu creation; owned by the parent menu once appended.
+    let (menu, modes, opacities) =
+        unsafe { (CreatePopupMenu(), CreatePopupMenu(), CreatePopupMenu()) };
+    for (mode, label) in MODES {
+        let needs_effects = matches!(mode, Mode::Blur | Mode::Acrylic) && !effects_on;
+        let label = if needs_effects {
+            format!("{label} (needs Transparency effects)")
+        } else {
+            label.to_string()
+        };
+        append(
+            modes,
+            MF_STRING,
+            encode(Choice::Mode(situation, mode)),
+            &label,
+        );
     }
+    let first = encode(Choice::Mode(situation, MODES[0].0));
+    let current = encode(Choice::Mode(situation, toggled.look.mode));
+    // SAFETY: the ids exist in `modes`.
+    let _ = unsafe {
+        CheckMenuRadioItem(
+            modes,
+            index_u32(first),
+            index_u32(first + MODES.len() - 1),
+            index_u32(current),
+            MF_BYCOMMAND.cast_unsigned(),
+        )
+    };
+    for opacity in OPACITIES {
+        let checked = if opacity == toggled.look.opacity {
+            MF_CHECKED
+        } else {
+            0
+        };
+        let id = encode(Choice::Opacity(situation, opacity));
+        append(opacities, MF_STRING | checked, id, &format!("{opacity}%"));
+    }
+    let look = toggled.look;
+    let tinted = !matches!(look.mode, Mode::Normal);
+    let has_opacity = !matches!(look.mode, Mode::Normal | Mode::Opaque);
+    let grayed = |enabled: bool| if enabled { 0 } else { MF_GRAYED };
+    if situation != Situation::Desktop {
+        let checked = if toggled.enabled { MF_CHECKED } else { 0 };
+        append(
+            menu,
+            MF_STRING | checked,
+            encode(Choice::Toggle(situation)),
+            "On",
+        );
+        append(menu, MF_SEPARATOR, 0, "");
+    }
+    append(menu, MF_POPUP, modes.0 as usize, "Appearance");
+    append(
+        menu,
+        MF_STRING | grayed(tinted),
+        encode(Choice::Color(situation)),
+        &format!("Color… ({})", look.color),
+    );
+    append(
+        menu,
+        MF_POPUP | grayed(has_opacity),
+        opacities.0 as usize,
+        "Opacity",
+    );
+    menu
 }
 
 /// Opens the Windows color picker; `None` if the user cancels.
@@ -278,4 +346,34 @@ pub fn pick_color(hwnd: HWND, current: Rgb) -> Option<Rgb> {
     }
     let [r, g, b, _] = dialog.rgbResult.0.to_le_bytes();
     Some(Rgb { r, g, b })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn every_choice_survives_its_menu_id() {
+        let mut choices = vec![Choice::Autostart, Choice::Exit];
+        for (situation, _) in SITUATIONS {
+            choices.push(Choice::Toggle(situation));
+            choices.push(Choice::Color(situation));
+            choices.extend(MODES.iter().map(|(mode, _)| Choice::Mode(situation, *mode)));
+            choices.extend(OPACITIES.iter().map(|o| Choice::Opacity(situation, *o)));
+        }
+        let mut ids: Vec<usize> = choices.iter().map(|c| encode(*c)).collect();
+        for (choice, id) in choices.iter().zip(&ids) {
+            assert_eq!(decode(*id), Some(*choice), "id {id}");
+        }
+        ids.sort_unstable();
+        ids.dedup();
+        assert_eq!(ids.len(), choices.len(), "ids are unique");
+    }
+
+    #[test]
+    fn cancel_and_unknown_ids_are_nothing() {
+        for id in [0, 1, 999, 1099, 1600, 8999, 9002] {
+            assert_eq!(decode(id), None, "id {id}");
+        }
+    }
 }
