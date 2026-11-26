@@ -65,8 +65,9 @@ No administrator rights, no network access, no telemetry.
 - While the mouse moves, Hyaline uses up to about 1 % of one CPU core: Windows reports every cursor
   move as a location change, which Hyaline needs to notice maximized windows. With nothing
   changing on screen it uses none.
-- Updating Hyaline while Explorer still has an older helper loaded shows a notice; restart
-  Explorer or sign out to finish.
+- To update, choose **Exit** first (a running `hyaline.exe` cannot be replaced), then replace the
+  files. If the new version's helper differs, Hyaline shows a notice until Explorer restarts or
+  you sign out.
 
 ## Uninstall
 

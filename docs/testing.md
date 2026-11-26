@@ -7,14 +7,16 @@ Run the relevant tables before every release and after changing the code they co
 
 1. `cargo build --workspace --release`
 2. Run `target\release\hyaline.exe`. Explorer loads a copy of the helper from
-   `%LOCALAPPDATA%\Hyaline`, so rebuilding is never blocked by a helper Explorer keeps loaded.
+   `%LOCALAPPDATA%\Hyaline`, so rebuilding is not blocked by the helper Explorer keeps loaded.
 3. Close File Explorer windows (an Explorer restart closes them) and note Explorer's PID:
    `(Get-Process explorer).Id`.
 4. Taskbar pixel check: sample the taskbar at a spot where the wallpaper is **not** black.
    Default (transparency effects off) is a flat `#1C1C1C`. "Cleared" means anything else:
    until Phase 3 sets the effect, the area under the hidden background shows black or the
    wallpaper, depending on the window's composition state.
-5. Helper loaded check: `(Get-Process explorer).Modules | Where-Object ModuleName -eq hyaline_tap.dll`.
+5. Helper loaded check: `(Get-Process explorer).Modules | Where-Object ModuleName -like 'hyaline_tap*'`
+   (Explorer loads the copy `hyaline_tap-<hash>.dll`; earlier phases loaded `hyaline_tap.dll`).
+   After changing the helper, restart Explorer: it keeps the helper it loaded until then.
 
 ## Phase 2 — Explorer helper
 
@@ -103,3 +105,14 @@ refresh (removed afterwards); memory and CPU from `Get-Process`.
 | T47 | Turn high contrast on (Settings → Accessibility → Contrast themes), then off | Windows' own taskbar while on; Hyaline's look back after off | pass (owner, 2026-11-26) |
 | T48 | Plug in, then unplug a second monitor (if available) | The new taskbar gets its look; nothing breaks on unplug | pass (owner, 2026-11-26) |
 | T49 | Optional: with Hyaline running, restart Explorer 3 times within 2 minutes | After the third: Windows' look, one "Hyaline paused" notice; changing a setting brings the look back | pass (owner, 2026-11-26) |
+
+## Phase 7 — Release
+
+Last run: 2026-11-26, same machine, fresh Explorer.
+
+| # | Action | Expected | Result |
+|---|---|---|---|
+| T50 | Start the release build | Explorer loads `%LOCALAPPDATA%\Hyaline\hyaline_tap-<hash>.dll`, not the file in the install folder | pass |
+| T51 | Exit, then delete the install folder while Explorer runs | Folder deleted | pass |
+| T52 | Start a different build (other helper bytes), then the first build again | The copy Explorer uses is kept; the other build's copy is added, then removed by the next start | pass |
+| T53 | Download the published zip, compare `Get-FileHash` with `SHA256SUMS.txt`, extract, run | Hashes equal; Hyaline starts and applies the look | pending (after the tag) |

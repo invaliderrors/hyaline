@@ -26,7 +26,7 @@ First release. Known limitations are listed in the
   restarts, sleep, theme, transparency, display and DPI changes, and new monitors.
 - Steps aside in high contrast, and pauses if Explorer keeps restarting.
 - Light: the look is applied 20–35 ms after start, about 2 MB of memory, no CPU while nothing on
-  screen changes, a 640 KB download.
+  screen changes, about 640 KB of binaries.
 - Release zip with a SHA-256 checksum and build provenance attestation.
 
 [Unreleased]: https://github.com/invaliderrors/hyaline/compare/v1.0.0...HEAD
