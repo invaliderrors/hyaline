@@ -6,9 +6,8 @@ Run the relevant tables before every release and after changing the code they co
 ## Setup
 
 1. `cargo build --workspace --release`
-2. Copy `target\release\hyaline.exe` and `target\release\hyaline_tap.dll` into a separate folder
-   and run from there. Explorer keeps the DLL it loaded locked until Explorer restarts, which
-   would otherwise block rebuilding `hyaline-tap`.
+2. Run `target\release\hyaline.exe`. Explorer loads a copy of the helper from
+   `%LOCALAPPDATA%\Hyaline`, so rebuilding is never blocked by a helper Explorer keeps loaded.
 3. Close File Explorer windows (an Explorer restart closes them) and note Explorer's PID:
    `(Get-Process explorer).Id`.
 4. Taskbar pixel check: sample the taskbar at a spot where the wallpaper is **not** black.
