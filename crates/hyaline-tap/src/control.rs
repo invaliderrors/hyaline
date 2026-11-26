@@ -4,17 +4,17 @@
 
 use crate::background;
 use crate::bindings::{
-    CloseHandle, CreateWindowExW, DefWindowProcW, GetModuleHandleW, HANDLE, HINSTANCE, HWND,
-    HWND_MESSAGE, INFINITE, LPARAM, LRESULT, OpenProcess, PostMessageW, RegisterClassW,
-    RegisterWaitForSingleObject, SYNCHRONIZE, UnregisterWait, WNDCLASSW, WPARAM,
-    WT_EXECUTEONLYONCE,
+    CloseHandle, CreateWindowExW, DefWindowProcW, EnumWindows, GetClassNameW, GetCurrentProcessId,
+    GetModuleHandleW, GetWindowThreadProcessId, HANDLE, HINSTANCE, HWND, HWND_MESSAGE, INFINITE,
+    LPARAM, LRESULT, OpenProcess, PostMessageW, RegisterClassW, RegisterWaitForSingleObject,
+    SYNCHRONIZE, UnregisterWait, WM_DWMCOMPOSITIONCHANGED, WNDCLASSW, WPARAM, WT_EXECUTEONLYONCE,
 };
 use crate::guard::guard;
-use hyaline_core::tap::{Command, WINDOW_CLASS};
+use hyaline_core::tap::{Command, WINDOW_CLASS, is_taskbar_window_class};
 use std::cell::{Cell, RefCell};
 use std::ffi::c_void;
 use std::sync::atomic::{AtomicU32, Ordering};
-use windows_core::{HSTRING, PCWSTR};
+use windows_core::{BOOL, HSTRING, PCWSTR, PWSTR};
 
 /// A pending wait for the host process to exit.
 struct HostWatch {
@@ -88,8 +88,56 @@ pub fn ensure() {
     }
     WINDOW.set(Some(hwnd));
     if !watch_host(hwnd, HOST_PID.load(Ordering::Relaxed)) {
-        background::set_cleared(false);
+        restore();
     }
+}
+
+/// Puts the taskbar back to Windows' default: shows the XAML background and has Explorer
+/// re-apply its own accent (it does so on `WM_DWMCOMPOSITIONCHANGED`). Returns false if any
+/// background element failed.
+fn restore() -> bool {
+    let restored = background::set_cleared(false);
+    reset_accents();
+    restored
+}
+
+/// Posts `WM_DWMCOMPOSITIONCHANGED` to every taskbar window of this Explorer process.
+fn reset_accents() {
+    unsafe extern "system" fn visit(hwnd: HWND, _: LPARAM) -> BOOL {
+        guard(BOOL(1), || {
+            if is_own_taskbar(hwnd) {
+                #[allow(clippy::cast_sign_loss)] // positive message id
+                // SAFETY: posting to a window of this process; failure is harmless.
+                let _ = unsafe {
+                    PostMessageW(
+                        Some(hwnd),
+                        WM_DWMCOMPOSITIONCHANGED as u32,
+                        WPARAM(0),
+                        LPARAM(0),
+                    )
+                };
+            }
+            BOOL(1)
+        })
+    }
+    // SAFETY: `visit` matches WNDENUMPROC and ignores its context.
+    let _ = unsafe { EnumWindows(Some(visit), LPARAM(0)) };
+}
+
+fn is_own_taskbar(hwnd: HWND) -> bool {
+    let mut pid = 0;
+    // SAFETY: `pid` is a valid out pointer.
+    unsafe { GetWindowThreadProcessId(hwnd, Some(&raw mut pid)) };
+    // SAFETY: no arguments.
+    if pid != unsafe { GetCurrentProcessId() } {
+        return false;
+    }
+    let mut class = [0u16; 64];
+    #[allow(clippy::cast_possible_truncation, clippy::cast_possible_wrap)] // 64 fits in i32
+    // SAFETY: the buffer and its length match.
+    let len = unsafe { GetClassNameW(hwnd, PWSTR(class.as_mut_ptr()), class.len() as i32) };
+    let len = usize::try_from(len).unwrap_or(0);
+    is_taskbar_window_class(&String::from_utf16_lossy(&class[..len]))
 }
 
 unsafe extern "system" fn window_proc(
@@ -108,12 +156,12 @@ unsafe extern "system" fn window_proc(
 fn handle(hwnd: HWND, command: Command) -> bool {
     match command {
         Command::Clear => background::set_cleared(true),
-        Command::Restore => background::set_cleared(false),
+        Command::Restore => restore(),
         Command::Attach { host_pid } => {
             preset_host(host_pid);
             let watching = watch_host(hwnd, host_pid);
             if !watching {
-                background::set_cleared(false);
+                restore();
             }
             watching
         }

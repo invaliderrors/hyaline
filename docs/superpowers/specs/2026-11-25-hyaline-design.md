@@ -70,7 +70,8 @@ hyaline.exe  (Rust, GUI subsystem, per-user)
 
 hyaline_tap.dll  (Rust cdylib, inside explorer.exe)
  └─ finds the taskbar's XAML background elements, makes them transparent, restores them on unload.
-    Every entry point wrapped in catch_unwind; any error = restore + unload. Never panics into Explorer.
+    Every entry point wrapped in catch_unwind; never panics into Explorer. Pinned in memory (cannot
+    unload); when it cannot watch the host it restores the taskbar.
 
 hyaline-core  (Rust lib, shared)
  └─ config types, appearance/state types, rules, IPC message definitions — all pure, all tested.
@@ -102,6 +103,10 @@ Visible window → Desktop. A disabled state falls through to the next.
   process handle).
 - Apply the accent with `AccentFlags = 2` so the configured color is used instead of the system accent.
   `GetWindowCompositionAttribute` cannot read the accent back — track applied state.
+- Apply the accent before hiding the XAML background (no black flash). Explorer re-applies its own
+  accent on `WM_DWMCOMPOSITIONCHANGED` / `WM_THEMECHANGED` / immersive color broadcasts, so re-apply
+  shortly after those. To restore Windows' exact default, post `WM_DWMCOMPOSITIONCHANGED` to the
+  taskbar windows (`ACCENT_DISABLED` is not the default). Found in Phase 3.
 - Re-apply on visual-tree `Add` events for the target elements (Explorer recreating the taskbar).
 - Detection: Start = `IAppVisibility` launcher visible; Search = foreground `SearchHost.exe`
   `Windows.UI.Core.CoreWindow` while launcher not visible; Task View = foreground

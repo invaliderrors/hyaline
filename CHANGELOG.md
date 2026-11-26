@@ -10,6 +10,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 
 - Project skeleton: cargo workspace, CI, MIT license.
+- Clear taskbar: a transparent accent on every taskbar, kept across theme, transparency and
+  display changes and Explorer restarts; Windows' exact default comes back when Hyaline stops.
 - App logo, used as the `hyaline.exe` icon and in the README.
 - Explorer helper: hides the taskbar background and always restores it, including when
   Hyaline exits or crashes and after Explorer restarts.
