@@ -1,9 +1,16 @@
-# Hyaline
+<p align="center">
+  <img src="assets/logo.png" width="160" alt="Hyaline logo: a glass letter H">
+</p>
 
-> *hyaline* (adj.) — glassy, transparent.
+<h1 align="center">Hyaline</h1>
 
-A tiny, fast Windows taskbar customizer: make the taskbar transparent, blurred,
-acrylic or tinted, and switch looks automatically based on what's on screen.
+<p align="center">
+  <em>hyaline</em> (adj.) — glassy, transparent.<br>
+  A tiny, fast Windows 11 taskbar customizer.
+</p>
+
+Make the taskbar transparent, blurred, acrylic or tinted, and switch looks automatically
+based on what's on screen.
 
 ## Goals
 
