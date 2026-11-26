@@ -117,6 +117,15 @@ impl Looks {
         }
     }
 
+    /// True if any look in use needs the Explorer helper (anything but Windows' own look).
+    #[must_use]
+    pub fn needs_helper(&self) -> bool {
+        Situation::ALL
+            .iter()
+            .map(|situation| self.toggled(*situation))
+            .any(|toggled| toggled.enabled && toggled.look.mode != Mode::Normal)
+    }
+
     /// The look of the highest-priority situation that is both happening and turned on.
     #[must_use]
     pub fn resolve(&self, observed: Observed) -> Appearance {
@@ -226,6 +235,28 @@ mod tests {
         assert_eq!(looks.resolve(maximized), look(Mode::Opaque));
         looks.visible_window.enabled = false;
         assert_eq!(looks.resolve(maximized), look(Mode::Clear));
+    }
+
+    #[test]
+    fn helper_is_needed_only_for_enabled_looks_other_than_normal() {
+        let normal = look(Mode::Normal);
+        let mut looks = Looks {
+            desktop: normal,
+            visible_window: on(normal),
+            maximized_window: on(normal),
+            start: Toggled {
+                enabled: false,
+                look: look(Mode::Clear),
+            },
+            search: on(normal),
+            task_view: on(normal),
+        };
+        assert!(!looks.needs_helper());
+        looks.start.enabled = true;
+        assert!(looks.needs_helper());
+        looks.start.enabled = false;
+        looks.desktop = look(Mode::Opaque);
+        assert!(looks.needs_helper());
     }
 
     #[test]

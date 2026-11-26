@@ -57,8 +57,10 @@ pub struct Foreground {
 /// Classifies the foreground window by class and process name (Windows 11, measured in
 /// `docs/research/win11-taskbar.md` §7). `launcher_visible` comes from `IAppVisibility`; Start
 /// is hosted by the same `SearchHost.exe` window as Search, so the flag tells them apart.
+/// `alt_tab` is true between `EVENT_SYSTEM_SWITCHSTART` and `SWITCHEND`: the Alt+Tab
+/// switcher uses the same window class as Task View.
 #[must_use]
-pub fn foreground(class: &str, exe: &str, launcher_visible: bool) -> Foreground {
+pub fn foreground(class: &str, exe: &str, launcher_visible: bool, alt_tab: bool) -> Foreground {
     if launcher_visible {
         return Foreground {
             start: true,
@@ -69,16 +71,23 @@ pub fn foreground(class: &str, exe: &str, launcher_visible: bool) -> Foreground 
     Foreground {
         start: false,
         search: class == "Windows.UI.Core.CoreWindow" && exe == "searchhost.exe",
-        task_view: class == "XamlExplorerHostIslandWindow" && exe == "explorer.exe",
+        task_view: !alt_tab && class == "XamlExplorerHostIslandWindow" && exe == "explorer.exe",
     }
 }
 
-/// Window classes of the desktop and the taskbars, which never count as windows.
+/// Window classes of the shell, which never count as windows: the desktop, the taskbars, and
+/// system surfaces (Start, Search, flyouts, emoji panel, touch keyboard, Task View, Alt+Tab).
+/// Store apps are hosted in `ApplicationFrameWindow`, so a top-level `CoreWindow` is the shell.
 #[must_use]
 pub fn is_shell_class(class: &str) -> bool {
     matches!(
         class,
-        "Progman" | "WorkerW" | "Shell_TrayWnd" | "Shell_SecondaryTrayWnd"
+        "Progman"
+            | "WorkerW"
+            | "Shell_TrayWnd"
+            | "Shell_SecondaryTrayWnd"
+            | "Windows.UI.Core.CoreWindow"
+            | "XamlExplorerHostIslandWindow"
     )
 }
 
@@ -155,14 +164,14 @@ mod tests {
     fn foreground_search_host_is_start_or_search() {
         let host = ("Windows.UI.Core.CoreWindow", "SearchHost.exe");
         assert_eq!(
-            foreground(host.0, host.1, true),
+            foreground(host.0, host.1, true, false),
             Foreground {
                 start: true,
                 ..Foreground::default()
             }
         );
         assert_eq!(
-            foreground(host.0, host.1, false),
+            foreground(host.0, host.1, false, false),
             Foreground {
                 search: true,
                 ..Foreground::default()
@@ -173,14 +182,22 @@ mod tests {
     #[test]
     fn foreground_task_view_is_recognized() {
         assert_eq!(
-            foreground("XamlExplorerHostIslandWindow", "explorer.exe", false),
+            foreground("XamlExplorerHostIslandWindow", "explorer.exe", false, false),
             Foreground {
                 task_view: true,
                 ..Foreground::default()
             }
         );
         assert_eq!(
-            foreground("XamlExplorerHostIslandWindow", "other.exe", false),
+            foreground("XamlExplorerHostIslandWindow", "other.exe", false, false),
+            Foreground::default()
+        );
+    }
+
+    #[test]
+    fn alt_tab_is_not_task_view() {
+        assert_eq!(
+            foreground("XamlExplorerHostIslandWindow", "explorer.exe", false, true),
             Foreground::default()
         );
     }
@@ -188,14 +205,14 @@ mod tests {
     #[test]
     fn launcher_flag_alone_means_start() {
         assert_eq!(
-            foreground("Chrome_WidgetWin_1", "chrome.exe", true),
+            foreground("Chrome_WidgetWin_1", "chrome.exe", true, false),
             Foreground {
                 start: true,
                 ..Foreground::default()
             }
         );
         assert_eq!(
-            foreground("Chrome_WidgetWin_1", "chrome.exe", false),
+            foreground("Chrome_WidgetWin_1", "chrome.exe", false, false),
             Foreground::default()
         );
     }
