@@ -10,6 +10,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 
 - Project skeleton: cargo workspace, CI, MIT license.
+- Tray icon and menu: Normal, Opaque, Clear, Blur and Acrylic looks with color and opacity,
+  Start with Windows, and Exit (restores Windows' own taskbar).
+- Settings saved to `%APPDATA%\Hyaline\config.toml`; an invalid file falls back to defaults
+  with a notification.
+- Version information in `hyaline.exe`.
 - Clear taskbar: a transparent accent on every taskbar, kept across theme, transparency and
   display changes and Explorer restarts; Windows' exact default comes back when Hyaline stops.
 - App logo, used as the `hyaline.exe` icon and in the README.
