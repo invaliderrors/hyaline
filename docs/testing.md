@@ -43,3 +43,4 @@ taskbar's row. Phase 2 T3, T5 and T8 were re-run with this build and pass.
 | T10 | While running, toggle transparency effects on, then off | Still clear after each toggle | pass |
 | T11 | Transparency on: note the default pixels; run Hyaline; force a red tint on `Shell_TrayWnd`; kill Hyaline | Pixels identical to the noted default | pass (`#212121 #202129 …` before and after) |
 | T12 | While running, restart Explorer | Clear again once the helper reloads (≤ 20 s) | pass (13 s) |
+| T13 | While running, switch Windows to light mode, then back to dark | Still clear in both | pass |
