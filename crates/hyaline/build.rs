@@ -2,12 +2,28 @@
 //! `src/bindings.rs`.
 
 fn main() {
+    embed_resources();
+    generate_bindings();
+}
+
+/// Icon and version information (taken from Cargo.toml).
+fn embed_resources() {
     println!("cargo:rerun-if-changed=build.rs");
     println!("cargo:rerun-if-changed=hyaline.rc");
     println!("cargo:rerun-if-changed=../../assets/logo.ico");
-    embed_resource::compile("hyaline.rc", embed_resource::NONE)
+    let version = env!("CARGO_PKG_VERSION");
+    let macros = [
+        format!("VERSION_MAJOR={}", env!("CARGO_PKG_VERSION_MAJOR")),
+        format!("VERSION_MINOR={}", env!("CARGO_PKG_VERSION_MINOR")),
+        format!("VERSION_PATCH={}", env!("CARGO_PKG_VERSION_PATCH")),
+        format!("VERSION_STR=\"{version}\""),
+    ];
+    embed_resource::compile("hyaline.rc", &macros)
         .manifest_optional()
         .expect("embedding the app icon failed");
+}
+
+fn generate_bindings() {
     windows_bindgen::bindgen([
         "--out",
         "src/bindings.rs",
