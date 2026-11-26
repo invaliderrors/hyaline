@@ -82,7 +82,7 @@ jobs:
         env:
           VERSION: ${{ steps.version.outputs.version }}
         run: |
-          $lines = Get-Content CHANGELOG.md
+          $lines = Get-Content CHANGELOG.md -Encoding utf8
           $start = ($lines | Select-String -Pattern "^## \[$([regex]::Escape($env:VERSION))\]" |
             Select-Object -First 1).LineNumber
           if (-not $start) { throw "CHANGELOG.md has no section for $env:VERSION" }
@@ -90,7 +90,7 @@ jobs:
             if ($line -match '^## \[') { break }
             if ($line -notmatch '^\[[^\]]+\]: ') { $line }
           }
-          ($notes -join "`n").Trim() | Set-Content notes.md
+          ($notes -join "`n").Trim() | Set-Content notes.md -Encoding utf8
       - name: Publish the release
         if: startsWith(github.ref, 'refs/tags/')
         env:
