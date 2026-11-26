@@ -20,7 +20,7 @@ based on what's on screen.
 
 ## Status
 
-Early development: Phases 0–2 done (foundation, research, Explorer helper). Roadmap: [`docs/PLAN.md`](docs/PLAN.md).
+Early development: Phases 0–3 done (foundation, research, Explorer helper, clear taskbar). Roadmap: [`docs/PLAN.md`](docs/PLAN.md).
 
 ## Build from source
 
