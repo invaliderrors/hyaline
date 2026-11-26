@@ -22,9 +22,10 @@ use bindings::{
     COINIT_APARTMENTTHREADED, CoInitializeEx, CreateMutexW, CreateWindowExW, DefWindowProcW,
     DispatchMessageW, ERROR_ALREADY_EXISTS, ERROR_NOT_FOUND, GetLastError, GetMessageW,
     GetModuleHandleW, HINSTANCE, HWND, KillTimer, LPARAM, LRESULT, MB_ICONERROR, MB_OK, MSG,
-    MessageBoxW, PostQuitMessage, RegisterClassW, RegisterWindowMessageW, SetTimer,
-    TranslateMessage, WM_DISPLAYCHANGE, WM_DWMCOMPOSITIONCHANGED, WM_SETTINGCHANGE,
-    WM_THEMECHANGED, WM_TIMER, WNDCLASSW, WPARAM,
+    MessageBoxW, PBT_APMRESUMEAUTOMATIC, PBT_APMRESUMESUSPEND, PostQuitMessage, RegisterClassW,
+    RegisterWindowMessageW, SPI_SETHIGHCONTRAST, SetTimer, TranslateMessage, WM_DISPLAYCHANGE,
+    WM_DWMCOMPOSITIONCHANGED, WM_POWERBROADCAST, WM_SETTINGCHANGE, WM_THEMECHANGED, WM_TIMER,
+    WNDCLASSW, WPARAM,
 };
 use hyaline_core::appearance::{Appearance, Mode};
 use hyaline_core::config::Config;
@@ -162,7 +163,8 @@ fn apply_settings(listener: HWND) -> Result<(), Box<dyn Error>> {
     if RESTARTS.with_borrow(RestartGuard::paused) {
         return Ok(());
     }
-    match ensure_tap(dll, SETTINGS.get().needs_helper())? {
+    let needed = SETTINGS.get().needs_helper() && !effect::high_contrast();
+    match ensure_tap(dll, needed)? {
         Ensure::Ready(windows) => {
             ATTEMPT.store(0, Ordering::Relaxed);
             attach(&windows)?;
@@ -257,8 +259,29 @@ fn refresh(listener: HWND, force: bool) -> Result<(), Box<dyn Error>> {
     let looks = SETTINGS.get();
     let taskbars = effect::taskbars();
     let observed = observe::observe(&taskbars, watcher::launcher_visible(), watcher::alt_tab());
-    let resolved: Vec<Appearance> = observed.iter().map(|o| looks.resolve(*o)).collect();
+    let high_contrast = effect::high_contrast();
+    let windows_look = Appearance {
+        mode: Mode::Normal,
+        ..Appearance::default()
+    };
+    let resolved: Vec<Appearance> = observed
+        .iter()
+        .map(|o| {
+            if high_contrast {
+                windows_look
+            } else {
+                looks.resolve(*o)
+            }
+        })
+        .collect();
     let cleared = resolved.iter().any(|look| look.mode != Mode::Normal);
+    // A taskbar created since the last refresh (monitor plugged in, taskbar recreated) gets
+    // Explorer's accent from Explorer at about the same time as ours.
+    let new_taskbar = APPLIED.with_borrow(|applied| {
+        taskbars
+            .iter()
+            .any(|hwnd| !applied.iter().any(|(h, _)| h == hwnd))
+    });
     let mut resets_posted = false;
     if cleared {
         resets_posted = apply_accents(&taskbars, &resolved, force)?;
@@ -267,7 +290,7 @@ fn refresh(listener: HWND, force: bool) -> Result<(), Box<dyn Error>> {
         APPLIED.with_borrow_mut(Vec::clear);
     }
     let cleared_changed = CLEARED.get() != Some(cleared);
-    if !force && cleared && (resets_posted || cleared_changed) {
+    if !force && cleared && (resets_posted || cleared_changed || new_taskbar) {
         // Explorer handles the posted reset (or the helper's earlier restore) after this
         // returns and may override the accent just applied; apply once more shortly after.
         schedule_reapply(listener);
@@ -562,6 +585,17 @@ unsafe extern "system" fn window_proc(
                 eprintln!("hyaline: re-applying the look failed: {error}");
             }
             return LRESULT(0);
+        }
+        WM_SETTINGCHANGE if wparam.0 == SPI_SETHIGHCONTRAST.cast_unsigned() as usize => {
+            // Leaving high contrast may need the helper loaded again.
+            try_load(hwnd);
+            schedule_reapply(hwnd);
+        }
+        WM_POWERBROADCAST
+            if wparam.0 == PBT_APMRESUMEAUTOMATIC.cast_unsigned() as usize
+                || wparam.0 == PBT_APMRESUMESUSPEND.cast_unsigned() as usize =>
+        {
+            schedule_reapply(hwnd);
         }
         // Explorer re-applies its own accent on these; ours must land after it.
         WM_DWMCOMPOSITIONCHANGED | WM_THEMECHANGED | WM_SETTINGCHANGE | WM_DISPLAYCHANGE => {

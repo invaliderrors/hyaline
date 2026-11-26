@@ -567,6 +567,16 @@ pub unsafe fn Shell_NotifyIconW(
     unsafe { Shell_NotifyIconW(dwmessage, lpdata) }
 }
 #[inline]
+pub unsafe fn SystemParametersInfoW(
+    uiaction: u32,
+    uiparam: u32,
+    pvparam: *mut core::ffi::c_void,
+    fwinini: u32,
+) -> windows_core::BOOL {
+    windows_core::link!("user32.dll" "system" fn SystemParametersInfoW(uiaction : u32, uiparam : u32, pvparam : *mut core::ffi::c_void, fwinini : u32) -> windows_core::BOOL);
+    unsafe { SystemParametersInfoW(uiaction, uiparam, pvparam as _, fwinini) }
+}
+#[inline]
 pub unsafe fn TrackPopupMenu(
     hmenu: HMENU,
     uflags: u32,
@@ -672,10 +682,18 @@ pub struct HANDLE(pub *mut core::ffi::c_void);
 #[repr(transparent)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
 pub struct HBRUSH(pub *mut core::ffi::c_void);
+pub const HCF_HIGHCONTRASTON: i32 = 1;
 pub type HCURSOR = HICON;
 #[repr(transparent)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
 pub struct HICON(pub *mut core::ffi::c_void);
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub struct HIGHCONTRASTW {
+    pub cbSize: u32,
+    pub dwFlags: u32,
+    pub lpszDefaultScheme: windows_core::PWSTR,
+}
 #[repr(transparent)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
 pub struct HINSTANCE(pub *mut core::ffi::c_void);
@@ -1128,6 +1146,8 @@ impl Default for NOTIFYICONDATAW_0 {
 }
 pub const NOTIFYICON_VERSION_4: i32 = 4;
 pub const OBJID_WINDOW: i32 = 0;
+pub const PBT_APMRESUMEAUTOMATIC: i32 = 18;
+pub const PBT_APMRESUMESUSPEND: i32 = 7;
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub struct POINT {
@@ -1156,6 +1176,8 @@ pub struct SECURITY_ATTRIBUTES {
 pub const SMTO_ABORTIFHUNG: i32 = 2;
 pub const SM_CXSMICON: i32 = 49;
 pub const SM_CYSMICON: i32 = 50;
+pub const SPI_GETHIGHCONTRAST: i32 = 66;
+pub const SPI_SETHIGHCONTRAST: i32 = 67;
 pub const SYNCHRONIZE: i32 = 1048576;
 pub type TIMERPROC =
     Option<unsafe extern "system" fn(param0: HWND, param1: u32, param2: usize, param3: u32)>;
@@ -1180,6 +1202,7 @@ pub const WM_DISPLAYCHANGE: i32 = 126;
 pub const WM_DWMCOMPOSITIONCHANGED: i32 = 798;
 pub const WM_LBUTTONUP: i32 = 514;
 pub const WM_NULL: i32 = 0;
+pub const WM_POWERBROADCAST: i32 = 536;
 pub const WM_RBUTTONUP: i32 = 517;
 pub const WM_SETTINGCHANGE: i32 = 26;
 pub const WM_THEMECHANGED: i32 = 794;
