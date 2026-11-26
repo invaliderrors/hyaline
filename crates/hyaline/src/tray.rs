@@ -2,12 +2,13 @@
 
 use crate::bindings::{
     AppendMenuW, CC_FULLOPEN, CC_RGBINIT, CHOOSECOLORW, COLORREF, CheckMenuRadioItem, ChooseColorW,
-    CreatePopupMenu, DestroyIcon, DestroyMenu, GetCursorPos, GetModuleHandleW, GetSystemMetrics,
-    HICON, HKEY_CURRENT_USER, HMENU, HWND, IMAGE_ICON, LPARAM, LR_DEFAULTCOLOR, LoadImageW,
-    MF_BYCOMMAND, MF_CHECKED, MF_GRAYED, MF_POPUP, MF_SEPARATOR, MF_STRING, NIF_ICON, NIF_INFO,
-    NIF_MESSAGE, NIF_TIP, NIIF_INFO, NIIF_WARNING, NIM_ADD, NIM_DELETE, NIM_MODIFY,
-    NOTIFYICONDATAW, POINT, PostMessageW, RRF_RT_REG_DWORD, RegGetValueW, SM_CXSMICON, SM_CYSMICON,
-    SetForegroundWindow, Shell_NotifyIconW, TPM_RETURNCMD, TPM_RIGHTBUTTON, TrackPopupMenu, WM_APP,
+    CreatePopupMenu, DestroyIcon, DestroyMenu, GetModuleHandleW, GetSystemMetrics, HICON,
+    HKEY_CURRENT_USER, HMENU, HWND, IMAGE_ICON, LPARAM, LR_DEFAULTCOLOR, LoadImageW, MF_BYCOMMAND,
+    MF_CHECKED, MF_GRAYED, MF_POPUP, MF_SEPARATOR, MF_STRING, NIF_ICON, NIF_INFO, NIF_MESSAGE,
+    NIF_TIP, NIIF_INFO, NIIF_WARNING, NIM_ADD, NIM_DELETE, NIM_MODIFY, NIM_SETVERSION,
+    NIN_KEYSELECT, NIN_SELECT, NOTIFYICON_VERSION_4, NOTIFYICONDATAW, POINT, PostMessageW,
+    RRF_RT_REG_DWORD, RegGetValueW, SM_CXSMICON, SM_CYSMICON, SetForegroundWindow,
+    Shell_NotifyIconW, TPM_RETURNCMD, TPM_RIGHTBUTTON, TrackPopupMenu, WM_APP, WM_CONTEXTMENU,
     WM_NULL, WPARAM,
 };
 use hyaline_core::appearance::{Appearance, Mode, Rgb};
@@ -81,6 +82,10 @@ pub fn add(hwnd: HWND) -> bool {
     copy_text(&mut data.szTip, "Hyaline");
     // SAFETY: `data` is fully initialized; the shell copies the icon.
     let added = unsafe { Shell_NotifyIconW(NIM_ADD.cast_unsigned(), &raw const data) }.as_bool();
+    // Version 4 delivers keyboard activation (Enter, Space, Shift+F10) as well as clicks.
+    data.Anonymous.uVersion = NOTIFYICON_VERSION_4.cast_unsigned();
+    // SAFETY: as above; the shell reads the version field.
+    let _ = unsafe { Shell_NotifyIconW(NIM_SETVERSION.cast_unsigned(), &raw const data) };
     if !icon.0.is_null() {
         // SAFETY: loaded above and no longer needed.
         let _ = unsafe { DestroyIcon(HICON(icon.0)) };
@@ -92,6 +97,22 @@ pub fn remove(hwnd: HWND) {
     let data = icon_data(hwnd);
     // SAFETY: identifies our icon by window and id.
     let _ = unsafe { Shell_NotifyIconW(NIM_DELETE.cast_unsigned(), &raw const data) };
+}
+
+/// If the tray message (`lparam`) is an activation by mouse or keyboard, where to anchor the
+/// menu (screen coordinates from `wparam`).
+pub fn activation(wparam: usize, lparam: isize) -> Option<POINT> {
+    let event = i32::try_from(lparam & 0xFFFF).ok()?;
+    if !matches!(event, WM_CONTEXTMENU | NIN_SELECT | NIN_KEYSELECT) {
+        return None;
+    }
+    // Signed 16-bit coordinates: monitors left of or above the primary are negative.
+    #[allow(clippy::cast_possible_truncation, clippy::cast_possible_wrap)]
+    let (x, y) = (wparam as u16 as i16, (wparam >> 16) as u16 as i16);
+    Some(POINT {
+        x: x.into(),
+        y: y.into(),
+    })
 }
 
 /// Shows a notification from the icon.
@@ -134,8 +155,13 @@ fn index_u32(index: usize) -> u32 {
     u32::try_from(index).unwrap_or(u32::MAX)
 }
 
-/// Shows the menu at the cursor and returns what the user picked.
-pub fn show_menu(hwnd: HWND, current: &Appearance, autostart: bool) -> Option<Choice> {
+/// Shows the menu at `anchor` and returns what the user picked.
+pub fn show_menu(
+    hwnd: HWND,
+    anchor: POINT,
+    current: &Appearance,
+    autostart: bool,
+) -> Option<Choice> {
     let effects_on = transparency_effects_on();
     // SAFETY: plain menu creation; every menu is destroyed below (submenus with their parent).
     let (menu, modes, opacities) =
@@ -201,17 +227,15 @@ pub fn show_menu(hwnd: HWND, current: &Appearance, autostart: bool) -> Option<Ch
     append(menu, MF_SEPARATOR, 0, "");
     append(menu, MF_STRING, ID_EXIT, "Exit");
 
-    let mut cursor = POINT::default();
-    // SAFETY: valid out pointer, our own window and menu. SetForegroundWindow and the trailing
+    // SAFETY: our own window and menu. SetForegroundWindow and the trailing
     // WM_NULL are the documented way to make tray menus close when clicking elsewhere.
     let picked = unsafe {
-        let _ = GetCursorPos(&raw mut cursor);
         let _ = SetForegroundWindow(hwnd);
         let picked = TrackPopupMenu(
             menu,
             (TPM_RETURNCMD | TPM_RIGHTBUTTON).cast_unsigned(),
-            cursor.x,
-            cursor.y,
+            anchor.x,
+            anchor.y,
             None,
             hwnd,
             None,

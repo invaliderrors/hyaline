@@ -559,6 +559,9 @@ pub const NIIF_WARNING: i32 = 2;
 pub const NIM_ADD: i32 = 0;
 pub const NIM_DELETE: i32 = 2;
 pub const NIM_MODIFY: i32 = 1;
+pub const NIM_SETVERSION: i32 = 4;
+pub const NIN_KEYSELECT: i32 = 1025;
+pub const NIN_SELECT: i32 = 1024;
 #[repr(C, packed(1))]
 #[cfg(target_arch = "x86")]
 #[derive(Clone, Copy)]
@@ -653,6 +656,7 @@ impl Default for NOTIFYICONDATAW_0 {
         unsafe { core::mem::zeroed() }
     }
 }
+pub const NOTIFYICON_VERSION_4: i32 = 4;
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub struct POINT {
@@ -686,6 +690,7 @@ pub type TIMERPROC =
 pub const TPM_RETURNCMD: i32 = 256;
 pub const TPM_RIGHTBUTTON: i32 = 2;
 pub const WM_APP: i32 = 32768;
+pub const WM_CONTEXTMENU: i32 = 123;
 pub const WM_DISPLAYCHANGE: i32 = 126;
 pub const WM_DWMCOMPOSITIONCHANGED: i32 = 798;
 pub const WM_LBUTTONUP: i32 = 514;
