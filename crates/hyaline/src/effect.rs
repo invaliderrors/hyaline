@@ -3,6 +3,7 @@
 
 use crate::bindings::{
     E_FAIL, EnumWindows, GetClassNameW, GetModuleHandleW, GetProcAddress, HWND, LPARAM,
+    PostMessageW, WM_DWMCOMPOSITIONCHANGED, WPARAM,
 };
 use hyaline_core::appearance::{AccentPolicy, Appearance, WCA_ACCENT_POLICY};
 use hyaline_core::tap::is_taskbar_window_class;
@@ -57,30 +58,36 @@ pub fn taskbars() -> Vec<HWND> {
     found
 }
 
-/// Applies `appearance` to every taskbar; nothing for Windows' own look. No taskbar yet is not
-/// an error: Explorer may be starting, and the effect is applied again once it is up.
-pub fn apply(appearance: &Appearance) -> Result<()> {
-    let Some(accent) = appearance.accent() else {
+/// Applies `appearance` to one taskbar window; Windows' own look resets it.
+pub fn apply_to(taskbar: HWND, appearance: &Appearance) -> Result<()> {
+    let Some(mut accent) = appearance.accent() else {
+        reset(taskbar);
         return Ok(());
     };
     let set = set_window_composition_attribute()
         .ok_or_else(|| Error::new(E_FAIL, "SetWindowCompositionAttribute is not available"))?;
-    let bars = taskbars();
-    let mut applied = 0;
-    for &hwnd in &bars {
-        let mut accent: AccentPolicy = accent;
-        let mut data = CompositionData {
-            attribute: WCA_ACCENT_POLICY,
-            data: (&raw mut accent).cast(),
-            size: size_of::<AccentPolicy>(),
-        };
-        // SAFETY: `data` points to a live, correctly sized accent policy for the call.
-        if unsafe { set(hwnd, &raw mut data) }.as_bool() {
-            applied += 1;
-        }
+    let mut data = CompositionData {
+        attribute: WCA_ACCENT_POLICY,
+        data: (&raw mut accent).cast(),
+        size: size_of::<AccentPolicy>(),
+    };
+    // SAFETY: `data` points to a live, correctly sized accent policy for the call.
+    if unsafe { set(taskbar, &raw mut data) }.as_bool() {
+        Ok(())
+    } else {
+        Err(Error::new(E_FAIL, "SetWindowCompositionAttribute failed"))
     }
-    if applied == 0 && !bars.is_empty() {
-        return Err(Error::from_thread());
-    }
-    Ok(())
+}
+
+/// Has Explorer put its own accent back on one taskbar window.
+pub fn reset(taskbar: HWND) {
+    // SAFETY: posting to a window; failure is harmless.
+    let _ = unsafe {
+        PostMessageW(
+            Some(taskbar),
+            WM_DWMCOMPOSITIONCHANGED.cast_unsigned(),
+            WPARAM(0),
+            LPARAM(0),
+        )
+    };
 }

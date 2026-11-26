@@ -13,20 +13,24 @@ mod config_file;
 mod effect;
 mod explorer;
 mod inject;
+mod observe;
 mod tap_client;
 mod tray;
+mod watcher;
 
 use bindings::{
-    CreateMutexW, CreateWindowExW, DefWindowProcW, DispatchMessageW, ERROR_ALREADY_EXISTS,
-    ERROR_NOT_FOUND, GetLastError, GetMessageW, GetModuleHandleW, HINSTANCE, HWND, KillTimer,
-    LPARAM, LRESULT, MB_ICONERROR, MB_OK, MSG, MessageBoxW, PostQuitMessage, RegisterClassW,
-    RegisterWindowMessageW, SetTimer, TranslateMessage, WM_DISPLAYCHANGE, WM_DWMCOMPOSITIONCHANGED,
-    WM_SETTINGCHANGE, WM_THEMECHANGED, WM_TIMER, WNDCLASSW, WPARAM,
+    COINIT_APARTMENTTHREADED, CoInitializeEx, CreateMutexW, CreateWindowExW, DefWindowProcW,
+    DispatchMessageW, ERROR_ALREADY_EXISTS, ERROR_NOT_FOUND, GetLastError, GetMessageW,
+    GetModuleHandleW, HINSTANCE, HWND, KillTimer, LPARAM, LRESULT, MB_ICONERROR, MB_OK, MSG,
+    MessageBoxW, PostQuitMessage, RegisterClassW, RegisterWindowMessageW, SetTimer,
+    TranslateMessage, WM_DISPLAYCHANGE, WM_DWMCOMPOSITIONCHANGED, WM_SETTINGCHANGE,
+    WM_THEMECHANGED, WM_TIMER, WNDCLASSW, WPARAM,
 };
 use hyaline_core::appearance::{Appearance, Mode};
 use hyaline_core::config::Config;
+use hyaline_core::states::{Looks, Situation, Toggled};
 use hyaline_core::tap::{Command, INSTANCE_MUTEX, InitData, retry_delay_ms};
-use std::cell::Cell;
+use std::cell::{Cell, RefCell};
 use std::error::Error;
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
@@ -49,7 +53,13 @@ static WAIT_ATTEMPT: AtomicU32 = AtomicU32::new(0);
 
 thread_local! {
     /// The look currently picked. Only the UI thread touches it.
-    static SETTINGS: Cell<Appearance> = Cell::new(Appearance::default());
+    static SETTINGS: Cell<Looks> = Cell::new(Looks::default());
+    /// The look last applied to each taskbar window.
+    static APPLIED: RefCell<Vec<(HWND, Appearance)>> = const { RefCell::new(Vec::new()) };
+    /// Whether the helper was last told to hide the background.
+    static CLEARED: Cell<Option<bool>> = const { Cell::new(None) };
+    /// Set by Exit: nothing may be applied any more.
+    static QUITTING: Cell<bool> = const { Cell::new(false) };
     /// True while the tray menu or the color picker is open (they run nested message loops,
     /// so another icon click could otherwise open a second one).
     static MENU_OPEN: Cell<bool> = const { Cell::new(false) };
@@ -57,7 +67,10 @@ thread_local! {
 
 /// Outcome of [`ensure_tap`].
 enum Ensure {
-    Done,
+    /// The helper's windows exist.
+    Ready(Vec<HWND>),
+    /// No configured look needs the helper.
+    Idle,
     /// Explorer's taskbar or XAML runtime is not up yet; try loading again shortly.
     NotReady,
     /// The helper is loaded but its window is not up yet; wait for it.
@@ -106,9 +119,12 @@ fn run() -> Result<(), Box<dyn Error>> {
     // SAFETY: constant, NUL-terminated message name.
     let taskbar_created = unsafe { RegisterWindowMessageW(w!("TaskbarCreated")) };
     TASKBAR_CREATED.store(taskbar_created, Ordering::Relaxed);
+    // SAFETY: once per thread, before any COM use.
+    unsafe { CoInitializeEx(None, COINIT_APARTMENTTHREADED.cast_unsigned()) }.ok()?;
     let listener = create_listener_window()?;
     let (config, notice) = config_file::load();
-    SETTINGS.set(config.appearance);
+    SETTINGS.set(config.looks);
+    watcher::start(listener);
     tray::add(listener);
     if let Some(notice) = notice {
         tray::notify(listener, "Hyaline settings", &notice, true);
@@ -134,11 +150,14 @@ fn apply_settings(listener: HWND) -> Result<(), Box<dyn Error>> {
     let Some(dll) = TAP_DLL.get() else {
         return Ok(());
     };
-    match ensure_tap(dll, SETTINGS.get())? {
-        Ensure::Done => {
+    match ensure_tap(dll, SETTINGS.get().needs_helper())? {
+        Ensure::Ready(windows) => {
             ATTEMPT.store(0, Ordering::Relaxed);
+            attach(&windows)?;
+            refresh(listener, true)?;
             schedule_reapply(listener);
         }
+        Ensure::Idle => ATTEMPT.store(0, Ordering::Relaxed),
         Ensure::NotReady => schedule_retry(listener),
         Ensure::Pending => {
             ATTEMPT.store(0, Ordering::Relaxed);
@@ -149,31 +168,28 @@ fn apply_settings(listener: HWND) -> Result<(), Box<dyn Error>> {
     Ok(())
 }
 
-/// Makes sure the helper matches `appearance`. Loads it (with nothing changed yet) only when a
-/// non-Normal look needs it; once its window exists, [`sync`] applies the look.
-fn ensure_tap(dll: &Path, appearance: Appearance) -> Result<Ensure, Box<dyn Error>> {
+/// Finds the helper, or loads it (with nothing changed yet) when a configured look needs it.
+fn ensure_tap(dll: &Path, needed: bool) -> Result<Ensure, Box<dyn Error>> {
     let windows = tap_client::find_all();
     if !windows.is_empty() {
-        sync(&windows, appearance)?;
-        return Ok(Ensure::Done);
+        return Ok(Ensure::Ready(windows));
     }
     let Some(explorer) = explorer::taskbar_process_id() else {
-        return Ok(if appearance.mode == Mode::Normal {
-            Ensure::Done
-        } else {
+        return Ok(if needed {
             Ensure::NotReady
+        } else {
+            Ensure::Idle
         });
     };
     if explorer::has_helper(explorer) {
-        // Loaded but its window is not up yet; sync once it is (also for Normal, so a look
-        // picked meanwhile is honoured).
+        // Loaded but its window is not up yet.
         return Ok(Ensure::Pending);
     }
-    if appearance.mode == Mode::Normal {
-        return Ok(Ensure::Done);
+    if !needed {
+        return Ok(Ensure::Idle);
     }
-    // Load without changing anything: the look is applied by `sync` in the right order
-    // (accent before hiding the background), and if this process dies first nothing changed.
+    // Load without changing anything: `refresh` applies the look in the right order (accent
+    // before hiding the background), and if this process dies first nothing changed.
     let init = InitData {
         host_pid: std::process::id(),
         cleared: false,
@@ -187,38 +203,92 @@ fn ensure_tap(dll: &Path, appearance: Appearance) -> Result<Ensure, Box<dyn Erro
     }
 }
 
-/// Applies `appearance` through existing helper windows: attach them to this process first
-/// (so they restore the taskbar if it dies), then the accent, then hide the background.
-fn sync(windows: &[HWND], appearance: Appearance) -> Result<(), Box<dyn Error>> {
+/// Attaches the helper windows to this process, so they restore the taskbar if it dies.
+fn attach(windows: &[HWND]) -> Result<(), Box<dyn Error>> {
     let host_pid = std::process::id();
     for &hwnd in windows {
         tap_client::send(hwnd, Command::Attach { host_pid })?;
     }
-    let cleared = appearance.mode != Mode::Normal;
-    if cleared {
-        effect::apply(&appearance)?;
+    Ok(())
+}
+
+/// Observes every monitor and gives each taskbar the look of its situation; only changes are
+/// applied unless `force`. Nothing is changed without the helper: if this process died, the
+/// helper is what puts Windows' own look back.
+fn refresh(listener: HWND, force: bool) -> Result<(), Box<dyn Error>> {
+    watcher::handled();
+    if QUITTING.get() {
+        return Ok(());
     }
-    let command = if cleared {
-        Command::Clear
+    let windows = tap_client::find_all();
+    if windows.is_empty() {
+        return Ok(());
+    }
+    let looks = SETTINGS.get();
+    let taskbars = effect::taskbars();
+    let observed = observe::observe(&taskbars, watcher::launcher_visible(), watcher::alt_tab());
+    let resolved: Vec<Appearance> = observed.iter().map(|o| looks.resolve(*o)).collect();
+    let cleared = resolved.iter().any(|look| look.mode != Mode::Normal);
+    let mut resets_posted = false;
+    if cleared {
+        resets_posted = apply_accents(&taskbars, &resolved, force)?;
     } else {
-        Command::Restore
-    };
-    for &hwnd in windows {
-        tap_client::send(hwnd, command)?;
+        // `Restore` below makes Explorer put back every accent.
+        APPLIED.with_borrow_mut(Vec::clear);
+    }
+    let cleared_changed = CLEARED.get() != Some(cleared);
+    if !force && cleared && (resets_posted || cleared_changed) {
+        // Explorer handles the posted reset (or the helper's earlier restore) after this
+        // returns and may override the accent just applied; apply once more shortly after.
+        schedule_reapply(listener);
+    }
+    if force || cleared_changed {
+        let command = if cleared {
+            Command::Clear
+        } else {
+            Command::Restore
+        };
+        for &hwnd in &windows {
+            tap_client::send(hwnd, command)?;
+        }
+        CLEARED.set(Some(cleared));
     }
     Ok(())
 }
 
-/// Re-applies the accent. Only while the helper is attached: if this process dies, the helper
-/// is what puts Windows' own accent back.
-fn reapply() {
-    let appearance = SETTINGS.get();
-    if appearance.mode == Mode::Normal || tap_client::find_all().is_empty() {
-        return;
-    }
-    if let Err(error) = effect::apply(&appearance) {
-        eprintln!("hyaline: applying the taskbar effect failed: {error}");
-    }
+/// Applies each taskbar's look. A taskbar resolving to Windows' own look while another does
+/// not gets Explorer's accent back (its background stays hidden: shown per monitor in a later
+/// phase). Resetting may make Explorer touch every taskbar, so the others are then re-applied.
+/// Returns whether any reset was posted.
+fn apply_accents(
+    taskbars: &[HWND],
+    resolved: &[Appearance],
+    force: bool,
+) -> Result<bool, Box<dyn Error>> {
+    APPLIED.with_borrow_mut(|applied| {
+        applied.retain(|(hwnd, _)| taskbars.contains(hwnd));
+        let changed =
+            |hwnd: HWND, look: &Appearance| !applied.iter().any(|(h, a)| *h == hwnd && a == look);
+        let resets: Vec<HWND> = taskbars
+            .iter()
+            .zip(resolved)
+            .filter(|(hwnd, look)| look.mode == Mode::Normal && (force || changed(**hwnd, look)))
+            .map(|(hwnd, _)| *hwnd)
+            .collect();
+        for &hwnd in &resets {
+            effect::reset(hwnd);
+        }
+        let reapply_all = force || !resets.is_empty();
+        for (&hwnd, look) in taskbars.iter().zip(resolved) {
+            if look.mode == Mode::Normal || !(reapply_all || changed(hwnd, look)) {
+                continue;
+            }
+            effect::apply_to(hwnd, look)?;
+        }
+        applied.clear();
+        applied.extend(taskbars.iter().copied().zip(resolved.iter().copied()));
+        Ok(!resets.is_empty())
+    })
 }
 
 fn schedule_reapply(listener: HWND) {
@@ -246,7 +316,7 @@ fn on_wait(listener: HWND) {
         schedule_wait(listener);
         return;
     }
-    if let Err(error) = sync(&windows, SETTINGS.get()) {
+    if let Err(error) = attach(&windows).and_then(|()| refresh(listener, true)) {
         eprintln!("hyaline: applying the look failed: {error}");
     }
     schedule_reapply(listener);
@@ -269,10 +339,10 @@ fn try_load(listener: HWND) {
     }
 }
 
-/// Stores, saves and applies a new look picked in the menu.
-fn update(listener: HWND, appearance: Appearance) {
-    SETTINGS.set(appearance);
-    if let Err(error) = config_file::save(Config { appearance }) {
+/// Stores, saves and applies settings changed in the menu.
+fn update(listener: HWND, looks: Looks) {
+    SETTINGS.set(looks);
+    if let Err(error) = config_file::save(Config { looks }) {
         tray::notify(
             listener,
             "Hyaline settings",
@@ -290,28 +360,42 @@ fn update(listener: HWND, appearance: Appearance) {
     }
 }
 
+/// Changes one situation's setting. Picking a look for a situation also turns it on.
+fn edit(listener: HWND, situation: Situation, change: impl FnOnce(&mut Toggled)) {
+    let mut looks = SETTINGS.get();
+    let mut toggled = looks.toggled(situation);
+    change(&mut toggled);
+    looks.set(situation, toggled);
+    update(listener, looks);
+}
+
 fn on_menu(listener: HWND, anchor: bindings::POINT) {
     if MENU_OPEN.replace(true) {
         return;
     }
-    let current = SETTINGS.get();
-    let choice = tray::show_menu(listener, anchor, &current, autostart::is_enabled());
+    let looks = SETTINGS.get();
+    let choice = tray::show_menu(listener, anchor, &looks, autostart::is_enabled());
     match choice {
         None => {}
-        Some(tray::Choice::Mode(mode)) => update(listener, Appearance { mode, ..current }),
-        Some(tray::Choice::Opacity(opacity)) => {
-            update(listener, Appearance { opacity, ..current });
+        Some(tray::Choice::Toggle(situation)) => {
+            edit(listener, situation, |t| t.enabled = !t.enabled);
         }
-        Some(tray::Choice::Color) => {
-            if let Some(color) = tray::pick_color(listener, current.color) {
-                // Read again: the dialog ran its own message loop.
-                update(
-                    listener,
-                    Appearance {
-                        color,
-                        ..SETTINGS.get()
-                    },
-                );
+        Some(tray::Choice::Mode(situation, mode)) => edit(listener, situation, |t| {
+            t.look.mode = mode;
+            t.enabled = true;
+        }),
+        Some(tray::Choice::Opacity(situation, opacity)) => edit(listener, situation, |t| {
+            t.look.opacity = opacity;
+            t.enabled = true;
+        }),
+        Some(tray::Choice::Color(situation)) => {
+            let current = looks.toggled(situation).look.color;
+            if let Some(color) = tray::pick_color(listener, current) {
+                // `edit` reads the settings again: the dialog ran its own message loop.
+                edit(listener, situation, |t| {
+                    t.look.color = color;
+                    t.enabled = true;
+                });
             }
         }
         Some(tray::Choice::Autostart) => {
@@ -331,6 +415,8 @@ fn on_menu(listener: HWND, anchor: bindings::POINT) {
 
 /// Puts Windows' own look back, removes the icon and quits.
 fn exit(listener: HWND) {
+    QUITTING.set(true);
+    watcher::stop();
     for hwnd in tap_client::find_all() {
         if let Err(error) = tap_client::send(hwnd, Command::Restore) {
             eprintln!("hyaline: restoring the taskbar failed: {error}");
@@ -393,6 +479,12 @@ unsafe extern "system" fn window_proc(
         try_load(hwnd);
         return LRESULT(0);
     }
+    if msg == watcher::RECOMPUTE {
+        if let Err(error) = refresh(hwnd, false) {
+            eprintln!("hyaline: updating the look failed: {error}");
+        }
+        return LRESULT(0);
+    }
     if msg == tray::MESSAGE {
         if let Some(anchor) = tray::activation(wparam.0, lparam.0) {
             on_menu(hwnd, anchor);
@@ -416,7 +508,9 @@ unsafe extern "system" fn window_proc(
         WM_TIMER if REAPPLY_TIMERS.iter().any(|&(id, _)| id == wparam.0) => {
             // SAFETY: our own window and timer id.
             let _ = unsafe { KillTimer(Some(hwnd), wparam.0) };
-            reapply();
+            if let Err(error) = refresh(hwnd, true) {
+                eprintln!("hyaline: re-applying the look failed: {error}");
+            }
             return LRESULT(0);
         }
         // Explorer re-applies its own accent on these; ours must land after it.

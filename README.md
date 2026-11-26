@@ -20,18 +20,24 @@ based on what's on screen.
 
 ## Status
 
-Early development: Phases 0–4 done (foundation, research, Explorer helper, clear taskbar, tray and settings). Roadmap: [`docs/PLAN.md`](docs/PLAN.md).
+Early development: Phases 0–5 done (foundation, research, Explorer helper, clear taskbar, tray and settings, dynamic looks). Roadmap: [`docs/PLAN.md`](docs/PLAN.md).
 
 ## Usage
 
-Run `hyaline.exe`; the taskbar turns clear and an **H** icon appears in the notification area
-(it may be under the ^ overflow arrow). Click it for the menu:
+Run `hyaline.exe`; an **H** icon appears in the notification area (it may be under the ^
+overflow arrow). Click it, or select it with the keyboard, for the menu.
 
+Each taskbar picks its look from what is happening on its monitor, highest priority first:
+**Start menu**, **Search**, **Task View**, **Maximized window**, **Visible window**, **Desktop**.
+Every situation has its own submenu:
+
+- **On** — whether the situation is used (Desktop is always on). By default Desktop is clear and
+  a maximized window gives Windows' own look; the others are off.
 - **Appearance** — Normal (Windows' own look), Opaque, Clear, Blur, Acrylic. Blur and Acrylic need
   Windows' *Transparency effects* setting on; without it Windows draws them as a solid tint.
 - **Color…** and **Opacity** — the tint used by Opaque, Clear, Blur and Acrylic.
-- **Start with Windows** — run at sign-in.
-- **Exit** — quit and put Windows' own taskbar back.
+
+Also in the menu: **Start with Windows**, and **Exit** (puts Windows' own taskbar back).
 
 Settings are saved to `%APPDATA%\Hyaline\config.toml`.
 
