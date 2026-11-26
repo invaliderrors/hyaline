@@ -44,6 +44,12 @@ pub fn save(config: Config) -> io::Result<()> {
         std::fs::create_dir_all(dir)?;
     }
     let temporary = path.with_extension("toml.tmp");
-    std::fs::write(&temporary, config.to_toml())?;
+    {
+        use std::io::Write;
+        let mut file = std::fs::File::create(&temporary)?;
+        file.write_all(config.to_toml().as_bytes())?;
+        // On disk before the rename, so a power loss never leaves an empty file behind.
+        file.sync_all()?;
+    }
     std::fs::rename(&temporary, &path)
 }
