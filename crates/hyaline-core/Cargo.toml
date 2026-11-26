@@ -1,0 +1,10 @@
+[package]
+name = "hyaline-core"
+description = "Pure, platform-independent Hyaline logic: config, states, rules and IPC types."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[lints]
+workspace = true
