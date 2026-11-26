@@ -1,0 +1,10 @@
+[package]
+name = "hyaline"
+description = "Tiny, fast Windows 11 taskbar transparency, blur and acrylic."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[lints]
+workspace = true
