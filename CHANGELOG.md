@@ -10,6 +10,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 
 - Project skeleton: cargo workspace, CI, MIT license.
+- Dynamic looks: Start menu, Search, Task View, Maximized window, Visible window and Desktop,
+  each with its own look and on/off, resolved per monitor with zero idle CPU.
+- Settings format version 2 (one look per situation); version 1 files are migrated.
 - Tray icon and menu: Normal, Opaque, Clear, Blur and Acrylic looks with color and opacity,
   Start with Windows, and Exit (restores Windows' own taskbar).
 - Settings saved to `%APPDATA%\Hyaline\config.toml`; an invalid file falls back to defaults
