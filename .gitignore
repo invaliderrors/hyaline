@@ -1,0 +1,13 @@
+# Build output
+/target/
+/build/
+/out/
+*.exe
+*.pdb
+
+# Editors / OS
+.vs/
+.vscode/
+.idea/
+Thumbs.db
+desktop.ini
