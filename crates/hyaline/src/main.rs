@@ -21,7 +21,7 @@ use bindings::{
     ERROR_NOT_FOUND, GetLastError, GetMessageW, GetModuleHandleW, HINSTANCE, HWND, KillTimer,
     LPARAM, LRESULT, MB_ICONERROR, MB_OK, MSG, MessageBoxW, PostQuitMessage, RegisterClassW,
     RegisterWindowMessageW, SetTimer, TranslateMessage, WM_DISPLAYCHANGE, WM_DWMCOMPOSITIONCHANGED,
-    WM_LBUTTONUP, WM_RBUTTONUP, WM_SETTINGCHANGE, WM_THEMECHANGED, WM_TIMER, WNDCLASSW, WPARAM,
+    WM_SETTINGCHANGE, WM_THEMECHANGED, WM_TIMER, WNDCLASSW, WPARAM,
 };
 use hyaline_core::appearance::{Appearance, Mode};
 use hyaline_core::config::Config;
@@ -42,17 +42,26 @@ const RETRY_TIMER: usize = 1;
 /// One-shot timers that re-apply the accent after Explorer has re-applied its own: a quick
 /// one, and a late one for when Explorer is busy and its own re-apply lands later.
 const REAPPLY_TIMERS: [(usize, u32); 2] = [(2, 250), (3, 1500)];
+/// Waits for a freshly loaded helper's window, which appears once Explorer's XAML tree reports
+/// the taskbar (asynchronous, slower at sign-in).
+const WAIT_TIMER: usize = 4;
+static WAIT_ATTEMPT: AtomicU32 = AtomicU32::new(0);
 
 thread_local! {
     /// The look currently picked. Only the UI thread touches it.
     static SETTINGS: Cell<Appearance> = Cell::new(Appearance::default());
+    /// True while the tray menu or the color picker is open (they run nested message loops,
+    /// so another icon click could otherwise open a second one).
+    static MENU_OPEN: Cell<bool> = const { Cell::new(false) };
 }
 
 /// Outcome of [`ensure_tap`].
 enum Ensure {
     Done,
-    /// Explorer's taskbar or XAML runtime is not up yet; try again shortly.
+    /// Explorer's taskbar or XAML runtime is not up yet; try loading again shortly.
     NotReady,
+    /// The helper is loaded but its window is not up yet; wait for it.
+    Pending,
 }
 
 fn main() -> ExitCode {
@@ -104,7 +113,10 @@ fn run() -> Result<(), Box<dyn Error>> {
     if let Some(notice) = notice {
         tray::notify(listener, "Hyaline settings", &notice, true);
     }
-    apply_settings(listener)?;
+    if let Err(error) = apply_settings(listener) {
+        tray::remove(listener);
+        return Err(error);
+    }
     let mut msg = MSG::default();
     // SAFETY: `msg` is a valid out pointer; GetMessageW returns 0 on WM_QUIT and -1 on error.
     while unsafe { GetMessageW(&raw mut msg, None, 0, 0) }.0 > 0 {
@@ -125,43 +137,65 @@ fn apply_settings(listener: HWND) -> Result<(), Box<dyn Error>> {
     match ensure_tap(dll, SETTINGS.get())? {
         Ensure::Done => {
             ATTEMPT.store(0, Ordering::Relaxed);
-            // The helper's window may appear a moment after loading; re-apply then.
             schedule_reapply(listener);
         }
         Ensure::NotReady => schedule_retry(listener),
+        Ensure::Pending => {
+            ATTEMPT.store(0, Ordering::Relaxed);
+            WAIT_ATTEMPT.store(0, Ordering::Relaxed);
+            schedule_wait(listener);
+        }
     }
     Ok(())
 }
 
-/// Makes sure the helper matches `appearance`: attached to this process, and hiding the
-/// background unless the mode is Normal. Loads it only when a non-Normal look needs it.
+/// Makes sure the helper matches `appearance`. Loads it (with nothing changed yet) only when a
+/// non-Normal look needs it; once its window exists, [`sync`] applies the look.
 fn ensure_tap(dll: &Path, appearance: Appearance) -> Result<Ensure, Box<dyn Error>> {
-    let host_pid = std::process::id();
-    let cleared = appearance.mode != Mode::Normal;
     let windows = tap_client::find_all();
-    if windows.is_empty() {
-        if !cleared {
-            return Ok(Ensure::Done);
-        }
-        let Some(explorer) = explorer::taskbar_process_id() else {
-            return Ok(Ensure::NotReady);
-        };
-        if explorer::has_helper(explorer) {
-            // Loaded but its window is not up yet; it starts with this host's state.
-            return Ok(Ensure::Done);
-        }
-        let init = InitData { host_pid, cleared };
-        // HRESULT_FROM_WIN32(ERROR_NOT_FOUND): Explorer's XAML runtime is not up yet.
-        let xaml_not_ready =
-            HRESULT((0x8007_0000_u32 | ERROR_NOT_FOUND.cast_unsigned()).cast_signed());
-        return match inject::inject(dll, explorer, init) {
-            Ok(()) => Ok(Ensure::Done),
-            Err(error) if error.code() == xaml_not_ready => Ok(Ensure::NotReady),
-            Err(error) => Err(error.into()),
-        };
+    if !windows.is_empty() {
+        sync(&windows, appearance)?;
+        return Ok(Ensure::Done);
     }
+    let Some(explorer) = explorer::taskbar_process_id() else {
+        return Ok(if appearance.mode == Mode::Normal {
+            Ensure::Done
+        } else {
+            Ensure::NotReady
+        });
+    };
+    if explorer::has_helper(explorer) {
+        // Loaded but its window is not up yet; sync once it is (also for Normal, so a look
+        // picked meanwhile is honoured).
+        return Ok(Ensure::Pending);
+    }
+    if appearance.mode == Mode::Normal {
+        return Ok(Ensure::Done);
+    }
+    // Load without changing anything: the look is applied by `sync` in the right order
+    // (accent before hiding the background), and if this process dies first nothing changed.
+    let init = InitData {
+        host_pid: std::process::id(),
+        cleared: false,
+    };
+    // HRESULT_FROM_WIN32(ERROR_NOT_FOUND): Explorer's XAML runtime is not up yet.
+    let xaml_not_ready = HRESULT((0x8007_0000_u32 | ERROR_NOT_FOUND.cast_unsigned()).cast_signed());
+    match inject::inject(dll, explorer, init) {
+        Ok(()) => Ok(Ensure::Pending),
+        Err(error) if error.code() == xaml_not_ready => Ok(Ensure::NotReady),
+        Err(error) => Err(error.into()),
+    }
+}
+
+/// Applies `appearance` through existing helper windows: attach them to this process first
+/// (so they restore the taskbar if it dies), then the accent, then hide the background.
+fn sync(windows: &[HWND], appearance: Appearance) -> Result<(), Box<dyn Error>> {
+    let host_pid = std::process::id();
+    for &hwnd in windows {
+        tap_client::send(hwnd, Command::Attach { host_pid })?;
+    }
+    let cleared = appearance.mode != Mode::Normal;
     if cleared {
-        // Accent first: hiding the XAML background before it would flash.
         effect::apply(&appearance)?;
     }
     let command = if cleared {
@@ -169,11 +203,10 @@ fn ensure_tap(dll: &Path, appearance: Appearance) -> Result<Ensure, Box<dyn Erro
     } else {
         Command::Restore
     };
-    for hwnd in windows {
-        tap_client::send(hwnd, Command::Attach { host_pid })?;
+    for &hwnd in windows {
         tap_client::send(hwnd, command)?;
     }
-    Ok(Ensure::Done)
+    Ok(())
 }
 
 /// Re-applies the accent. Only while the helper is attached: if this process dies, the helper
@@ -193,6 +226,30 @@ fn schedule_reapply(listener: HWND) {
         // SAFETY: our own window; re-arming an existing timer just restarts it.
         unsafe { SetTimer(Some(listener), id, delay, None) };
     }
+}
+
+fn schedule_wait(listener: HWND) {
+    let attempt = WAIT_ATTEMPT.fetch_add(1, Ordering::Relaxed);
+    match retry_delay_ms(attempt) {
+        // SAFETY: `listener` is our own window; the timer is killed when it fires.
+        Some(delay) => unsafe {
+            SetTimer(Some(listener), WAIT_TIMER, delay, None);
+        },
+        None => eprintln!("hyaline: the helper's window never appeared"),
+    }
+}
+
+/// The helper's window should be up by now: apply the look, or keep waiting.
+fn on_wait(listener: HWND) {
+    let windows = tap_client::find_all();
+    if windows.is_empty() {
+        schedule_wait(listener);
+        return;
+    }
+    if let Err(error) = sync(&windows, SETTINGS.get()) {
+        eprintln!("hyaline: applying the look failed: {error}");
+    }
+    schedule_reapply(listener);
 }
 
 fn schedule_retry(listener: HWND) {
@@ -233,20 +290,31 @@ fn update(listener: HWND, appearance: Appearance) {
     }
 }
 
-fn on_menu(listener: HWND) {
-    let current = SETTINGS.get();
-    let Some(choice) = tray::show_menu(listener, &current, autostart::is_enabled()) else {
+fn on_menu(listener: HWND, anchor: bindings::POINT) {
+    if MENU_OPEN.replace(true) {
         return;
-    };
+    }
+    let current = SETTINGS.get();
+    let choice = tray::show_menu(listener, anchor, &current, autostart::is_enabled());
     match choice {
-        tray::Choice::Mode(mode) => update(listener, Appearance { mode, ..current }),
-        tray::Choice::Opacity(opacity) => update(listener, Appearance { opacity, ..current }),
-        tray::Choice::Color => {
+        None => {}
+        Some(tray::Choice::Mode(mode)) => update(listener, Appearance { mode, ..current }),
+        Some(tray::Choice::Opacity(opacity)) => {
+            update(listener, Appearance { opacity, ..current });
+        }
+        Some(tray::Choice::Color) => {
             if let Some(color) = tray::pick_color(listener, current.color) {
-                update(listener, Appearance { color, ..current });
+                // Read again: the dialog ran its own message loop.
+                update(
+                    listener,
+                    Appearance {
+                        color,
+                        ..SETTINGS.get()
+                    },
+                );
             }
         }
-        tray::Choice::Autostart => {
+        Some(tray::Choice::Autostart) => {
             if let Err(error) = autostart::set(!autostart::is_enabled()) {
                 tray::notify(
                     listener,
@@ -256,8 +324,9 @@ fn on_menu(listener: HWND) {
                 );
             }
         }
-        tray::Choice::Exit => exit(listener),
+        Some(tray::Choice::Exit) => exit(listener),
     }
+    MENU_OPEN.set(false);
 }
 
 /// Puts Windows' own look back, removes the icon and quits.
@@ -325,15 +394,19 @@ unsafe extern "system" fn window_proc(
         return LRESULT(0);
     }
     if msg == tray::MESSAGE {
-        // The low word carries the mouse message.
-        let event = lparam.0 & 0xFFFF;
-        if event == WM_RBUTTONUP as isize || event == WM_LBUTTONUP as isize {
-            on_menu(hwnd);
+        if let Some(anchor) = tray::activation(wparam.0, lparam.0) {
+            on_menu(hwnd, anchor);
         }
         return LRESULT(0);
     }
     // Generated message constants are i32; real message ids are small positive values.
     match msg.cast_signed() {
+        WM_TIMER if wparam.0 == WAIT_TIMER => {
+            // SAFETY: our own window and timer id.
+            let _ = unsafe { KillTimer(Some(hwnd), WAIT_TIMER) };
+            on_wait(hwnd);
+            return LRESULT(0);
+        }
         WM_TIMER if wparam.0 == RETRY_TIMER => {
             // SAFETY: our own window and timer id.
             let _ = unsafe { KillTimer(Some(hwnd), RETRY_TIMER) };
