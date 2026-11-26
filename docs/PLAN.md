@@ -6,7 +6,7 @@ Design: [`superpowers/specs/2026-11-25-hyaline-design.md`](superpowers/specs/202
 |---|---|---|
 | 0 | Foundation | done |
 | 1 | Research spike (Win11 taskbar internals) | done — [findings](research/win11-taskbar.md) |
-| 2 | Explorer helper | not started |
+| 2 | Explorer helper | done |
 | 3 | Core effect | not started |
 | 4 | Tray + config | not started |
 | 5 | Dynamic states | not started |
