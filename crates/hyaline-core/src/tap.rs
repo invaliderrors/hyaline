@@ -91,12 +91,19 @@ pub fn is_taskbar_background(name: &str, grandparent_name: Option<&str>) -> bool
         && grandparent_name == Some("BackgroundControl")
 }
 
-/// Finds the `Fill` property index in a XAML property chain of `(name, index)` pairs.
+/// XAML property the helper sets to 0 to hide a background element. Its value is never
+/// set by Explorer, so clearing our local value restores the original exactly.
+pub const OPACITY: &str = "Opacity";
+
+/// Finds a property's index in a XAML property chain of `(name, index)` pairs.
 #[must_use]
-pub fn fill_property_index<'a>(props: impl IntoIterator<Item = (&'a str, u32)>) -> Option<u32> {
+pub fn property_index<'a>(
+    props: impl IntoIterator<Item = (&'a str, u32)>,
+    property: &str,
+) -> Option<u32> {
     props
         .into_iter()
-        .find_map(|(name, index)| (name == "Fill").then_some(index))
+        .find_map(|(name, index)| (name == property).then_some(index))
 }
 
 #[cfg(test)]
@@ -173,14 +180,15 @@ mod tests {
     }
 
     #[test]
-    fn fill_index_is_first_fill_entry() {
+    fn property_index_is_first_matching_entry() {
         let chain = [
             ("Opacity", 453),
             ("Fill", 1106),
-            ("Fill", 1106),
+            ("Opacity", 999),
             ("Stroke", 1109),
         ];
-        assert_eq!(fill_property_index(chain), Some(1106));
-        assert_eq!(fill_property_index([("Opacity", 453)]), None);
+        assert_eq!(property_index(chain, OPACITY), Some(453));
+        assert_eq!(property_index(chain, "Fill"), Some(1106));
+        assert_eq!(property_index([("Fill", 1106)], OPACITY), None);
     }
 }
