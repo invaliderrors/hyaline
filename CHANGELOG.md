@@ -10,3 +10,5 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 
 - Project skeleton: cargo workspace, CI, MIT license.
+- Explorer helper: hides the taskbar background and always restores it, including when
+  Hyaline exits or crashes and after Explorer restarts.

@@ -85,7 +85,9 @@ visual-tree callback reports as new `Add` events (re-apply there, event-driven).
 - Setting back value handles from an earlier session → `0x80070490` (not found): handles are per session.
 - Toggling transparency effects does **not** make Explorer rebuild the brush.
 - Only an Explorer restart restored the default in the spike.
-- → **The DLL must `GetProperty` the original brush before overriding, keep it, and set it back.**
+- → ~~The DLL must `GetProperty` the original brush before overriding, keep it, and set it back.~~
+  **Superseded in Phase 2:** a handle does not keep its object alive, so once the brush is replaced
+  the saved handle is dead (`0x80070490`). Hyaline instead sets `Opacity` = 0 and clears it to restore.
   If the host app dies, the DLL must notice (wait on the host process handle) and restore by itself.
   Whether `SetProperty` may be called off the UI thread is **unverified** — Phase 2 must check, or marshal
   through `IXamlDiagnostics::GetDispatcher` (a `Windows.UI.Core.CoreDispatcher`).

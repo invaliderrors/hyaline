@@ -92,9 +92,10 @@ Visible window → Desktop. A disabled state falls through to the next.
 **Binding rules from Phase 1** (details and evidence: `docs/research/win11-taskbar.md`):
 - Target only `Rectangle` `BackgroundFill` / `BackgroundStroke` whose grandparent is
   `Taskbar.TaskbarBackground` named `BackgroundControl` — never the hover-flyout copy.
-- Find the `Fill` property index via `GetPropertyValuesChain` (never hard-code; `GetPropertyIndex` fails).
-- Before overriding, `GetProperty` and keep the original brush; restore by setting it back
-  (`ClearProperty` leaves no fill; handles do not survive a session).
+- Hide them by setting `Opacity` to 0 and restore with `ClearProperty(Opacity)`; find the index via
+  `GetPropertyValuesChain` (never hard-code; `GetPropertyIndex` fails). Never replace their `Fill`:
+  XAML Diagnostics handles do not keep objects alive, so a replaced brush cannot be put back
+  (found in Phase 2).
 - Inject **once** per Explorer instance (the DLL cannot unload); all later changes go over IPC.
   Re-inject only after `TaskbarCreated`.
 - If the host app exits or crashes, the DLL restores the original brushes by itself (waits on the host
