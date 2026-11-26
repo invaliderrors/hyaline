@@ -71,6 +71,16 @@ pub unsafe fn DefWindowProcW(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPARA
     unsafe { DefWindowProcW(hwnd, msg, wparam, lparam) }
 }
 #[inline]
+pub unsafe fn EnumWindows(lpenumfunc: WNDENUMPROC, lparam: LPARAM) -> windows_core::BOOL {
+    windows_core::link!("user32.dll" "system" fn EnumWindows(lpenumfunc : WNDENUMPROC, lparam : LPARAM) -> windows_core::BOOL);
+    unsafe { EnumWindows(lpenumfunc, lparam) }
+}
+#[inline]
+pub unsafe fn GetClassNameW(hwnd: HWND, lpclassname: windows_core::PWSTR, nmaxcount: i32) -> i32 {
+    windows_core::link!("user32.dll" "system" fn GetClassNameW(hwnd : HWND, lpclassname : windows_core::PWSTR, nmaxcount : i32) -> i32);
+    unsafe { GetClassNameW(hwnd, lpclassname, nmaxcount) }
+}
+#[inline]
 pub unsafe fn GetCurrentProcessId() -> u32 {
     windows_core::link!("kernel32.dll" "system" fn GetCurrentProcessId() -> u32);
     unsafe { GetCurrentProcessId() }
@@ -94,6 +104,11 @@ where
 {
     windows_core::link!("kernel32.dll" "system" fn GetModuleHandleW(lpmodulename : windows_core::PCWSTR) -> HMODULE);
     unsafe { GetModuleHandleW(lpmodulename.param().abi()) }
+}
+#[inline]
+pub unsafe fn GetWindowThreadProcessId(hwnd: HWND, lpdwprocessid: Option<*mut u32>) -> u32 {
+    windows_core::link!("user32.dll" "system" fn GetWindowThreadProcessId(hwnd : HWND, lpdwprocessid : *mut u32) -> u32);
+    unsafe { GetWindowThreadProcessId(hwnd, lpdwprocessid.unwrap_or(core::mem::zeroed()) as _) }
 }
 #[inline]
 pub unsafe fn OpenProcess(dwdesiredaccess: u32, binherithandle: bool, dwprocessid: u32) -> HANDLE {
@@ -396,6 +411,7 @@ pub const S_FALSE: windows_core::HRESULT = windows_core::HRESULT(0x1_u32 as _);
 pub type WAITORTIMERCALLBACK = WAITORTIMERCALLBACKFUNC;
 pub type WAITORTIMERCALLBACKFUNC =
     Option<unsafe extern "system" fn(param0: *mut core::ffi::c_void, param1: bool)>;
+pub const WM_DWMCOMPOSITIONCHANGED: i32 = 798;
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Default)]
 pub struct WNDCLASSW {
@@ -410,6 +426,8 @@ pub struct WNDCLASSW {
     pub lpszMenuName: windows_core::PCWSTR,
     pub lpszClassName: windows_core::PCWSTR,
 }
+pub type WNDENUMPROC =
+    Option<unsafe extern "system" fn(param0: HWND, param1: LPARAM) -> windows_core::BOOL>;
 pub type WNDPROC = Option<
     unsafe extern "system" fn(param0: HWND, param1: u32, param2: WPARAM, param3: LPARAM) -> LRESULT,
 >;

@@ -25,11 +25,14 @@ fn main() {
         "E_NOTIMPL",
         "E_POINTER",
         "E_UNEXPECTED",
+        "EnumWindows",
         "GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS",
         "GET_MODULE_HANDLE_EX_FLAG_PIN",
+        "GetClassNameW",
         "GetCurrentProcessId",
         "GetModuleHandleExW",
         "GetModuleHandleW",
+        "GetWindowThreadProcessId",
         "HWND_MESSAGE",
         "IClassFactory",
         "INFINITE",
@@ -41,6 +44,7 @@ fn main() {
         "RegisterWaitForSingleObject",
         "S_FALSE",
         "UnregisterWait",
+        "WM_DWMCOMPOSITIONCHANGED",
         "WT_EXECUTEONLYONCE",
     ]);
 }
