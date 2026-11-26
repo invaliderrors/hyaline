@@ -133,6 +133,31 @@ pub const fn retry_delay_ms(attempt: u32) -> Option<u32> {
     if attempt < 120 { Some(500) } else { None }
 }
 
+const TAP_COPY_PREFIX: &str = "hyaline_tap-";
+const TAP_COPY_SUFFIX: &str = ".dll";
+
+/// File name of the helper copy Explorer loads, unique per helper build: Explorer keeps a
+/// loaded helper locked until it restarts, so it never loads the file in the install folder
+/// (which upgrades replace). FNV-1a 64 of the file's bytes, in hex.
+#[must_use]
+pub fn tap_file_name(contents: &[u8]) -> String {
+    let hash = contents
+        .iter()
+        .fold(0xcbf2_9ce4_8422_2325_u64, |hash, &byte| {
+            (hash ^ u64::from(byte)).wrapping_mul(0x0100_0000_01b3)
+        });
+    format!("{TAP_COPY_PREFIX}{hash:016x}{TAP_COPY_SUFFIX}")
+}
+
+/// True for names produced by [`tap_file_name`] (any case, as Windows file names are).
+#[must_use]
+pub fn is_tap_copy(name: &str) -> bool {
+    let name = name.to_ascii_lowercase();
+    name.strip_prefix(TAP_COPY_PREFIX)
+        .and_then(|rest| rest.strip_suffix(TAP_COPY_SUFFIX))
+        .is_some_and(|hash| hash.len() == 16 && hash.bytes().all(|b| b.is_ascii_hexdigit()))
+}
+
 /// Explorer restarts this close together, while the helper was loaded, look like a crash loop.
 const CRASH_LOOP_RESTARTS: usize = 3;
 const CRASH_LOOP_WINDOW_MS: u64 = 120_000;
@@ -208,6 +233,28 @@ mod tests {
     fn unknown_message_is_not_a_command() {
         assert_eq!(Command::from_message(0x0010, 0), None); // WM_CLOSE
         assert_eq!(Command::from_message(0x8005, 0), None);
+    }
+
+    #[test]
+    fn helper_copy_is_named_by_content() {
+        assert_eq!(tap_file_name(b""), "hyaline_tap-cbf29ce484222325.dll");
+        assert_eq!(tap_file_name(b"a"), "hyaline_tap-af63dc4c8601ec8c.dll");
+        assert_ne!(tap_file_name(b"build 1"), tap_file_name(b"build 2"));
+    }
+
+    #[test]
+    fn only_helper_copies_are_recognized() {
+        assert!(is_tap_copy(&tap_file_name(b"x")));
+        assert!(is_tap_copy("HYALINE_TAP-CBF29CE484222325.DLL"));
+        for other in [
+            "hyaline_tap.dll",
+            "hyaline_tap-123.dll",
+            "hyaline_tap-cbf29ce484222325.dll.tmp",
+            "hyaline_tap-zzzzzzzzzzzzzzzz.dll",
+            "config.toml",
+        ] {
+            assert!(!is_tap_copy(other), "{other}");
+        }
     }
 
     #[test]
