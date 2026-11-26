@@ -20,7 +20,20 @@ based on what's on screen.
 
 ## Status
 
-Early development: Phases 0–3 done (foundation, research, Explorer helper, clear taskbar). Roadmap: [`docs/PLAN.md`](docs/PLAN.md).
+Early development: Phases 0–4 done (foundation, research, Explorer helper, clear taskbar, tray and settings). Roadmap: [`docs/PLAN.md`](docs/PLAN.md).
+
+## Usage
+
+Run `hyaline.exe`; the taskbar turns clear and an **H** icon appears in the notification area
+(it may be under the ^ overflow arrow). Click it for the menu:
+
+- **Appearance** — Normal (Windows' own look), Opaque, Clear, Blur, Acrylic. Blur and Acrylic need
+  Windows' *Transparency effects* setting on; without it Windows draws them as a solid tint.
+- **Color…** and **Opacity** — the tint used by Opaque, Clear, Blur and Acrylic.
+- **Start with Windows** — run at sign-in.
+- **Exit** — quit and put Windows' own taskbar back.
+
+Settings are saved to `%APPDATA%\Hyaline\config.toml`.
 
 ## Build from source
 

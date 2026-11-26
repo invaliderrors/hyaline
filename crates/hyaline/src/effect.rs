@@ -57,15 +57,18 @@ pub fn taskbars() -> Vec<HWND> {
     found
 }
 
-/// Applies `appearance` to every taskbar. No taskbar yet is not an error: Explorer may be
-/// starting, and the effect is applied again once it is up.
-pub fn apply(appearance: Appearance) -> Result<()> {
+/// Applies `appearance` to every taskbar; nothing for Windows' own look. No taskbar yet is not
+/// an error: Explorer may be starting, and the effect is applied again once it is up.
+pub fn apply(appearance: &Appearance) -> Result<()> {
+    let Some(accent) = appearance.accent() else {
+        return Ok(());
+    };
     let set = set_window_composition_attribute()
         .ok_or_else(|| Error::new(E_FAIL, "SetWindowCompositionAttribute is not available"))?;
     let bars = taskbars();
     let mut applied = 0;
     for &hwnd in &bars {
-        let mut accent: AccentPolicy = appearance.accent();
+        let mut accent: AccentPolicy = accent;
         let mut data = CompositionData {
             attribute: WCA_ACCENT_POLICY,
             data: (&raw mut accent).cast(),
