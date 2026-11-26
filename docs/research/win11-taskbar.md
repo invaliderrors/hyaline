@@ -113,3 +113,21 @@ dispatcher types — confirm when adopting it.
 2. Secondary monitors (`Shell_SecondaryTrayWnd`, multiple `TaskbarFrame`s) — needs a 2-monitor test.
 3. Explorer memory/CPU overhead of an active XAML Diagnostics session (Phase 6 budget).
 4. Behaviour with transparency effects off for blur/acrylic (Windows draws them solid) — product decision.
+
+## Addendum (Phase 3): the accent and how to undo it
+
+Measured with transparency effects on, default XAML background, pixels at five points:
+
+| Taskbar accent | Result |
+|---|---|
+| Windows default | `#212121 #202129 #212022 #202226 #20212A` (wallpaper faintly through acrylic) |
+| Clear (state 2, flags 2, color 0) | identical to the default |
+| `ACCENT_DISABLED` (state 0) | flat `#202020` — **not** the default |
+| Red tint (state 2, flags 2, `0xC00000FF`) | `#491313 …` |
+| Red tint, then `WM_DWMCOMPOSITIONCHANGED` or `WM_THEMECHANGED` sent to `Shell_TrayWnd` | back to the exact default |
+| Red tint, then an `ImmersiveColorSet` broadcast | back to the exact default |
+| Red tint, then a plain `WM_SETTINGCHANGE` to `Shell_TrayWnd` | tint stays |
+
+Consequences: Explorer re-applies its own accent on composition/theme changes, so Hyaline
+re-applies after them; and the helper restores Windows' exact default by posting
+`WM_DWMCOMPOSITIONCHANGED` to its taskbar windows.

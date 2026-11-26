@@ -31,3 +31,15 @@ Last run: 2026-11-25, Windows 11 build 26300, one 1920×1080 monitor, transparen
 | T6 | Repeat T3 → T4 five times | Explorer never restarts; still one `hyaline_tap.dll` | pass |
 | T7 | Fresh Explorer: start `hyaline.exe` and kill it ~30 ms later | Default taskbar; never left cleared | pass |
 | T8 | Start `hyaline.exe` while it is already running | Second process exits with code 0; nothing changes | pass |
+
+## Phase 3 — Core effect
+
+Last run: 2026-11-25, same machine. Pixels sampled at x = 50, 300, 550, 1400, 1600 on the
+taskbar's row. Phase 2 T3, T5 and T8 were re-run with this build and pass.
+
+| # | Action | Expected | Result |
+|---|---|---|---|
+| T9 | Run Hyaline (transparency effects off) | Taskbar fully clear: the wallpaper continues behind the icons | pass (screenshot) |
+| T10 | While running, toggle transparency effects on, then off | Still clear after each toggle | pass |
+| T11 | Transparency on: note the default pixels; run Hyaline; force a red tint on `Shell_TrayWnd`; kill Hyaline | Pixels identical to the noted default | pass (`#212121 #202129 …` before and after) |
+| T12 | While running, restart Explorer | Clear again once the helper reloads (≤ 20 s) | pass (13 s) |
