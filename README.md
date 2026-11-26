@@ -8,7 +8,7 @@ acrylic or tinted, and switch looks automatically based on what's on screen.
 ## Goals
 
 - **Very light** — near-zero CPU at idle, tiny memory footprint, single small exe.
-- **Just works** — Windows 10 and 11, multi-monitor, survives Explorer restarts.
+- **Just works** — Windows 11, multi-monitor, survives Explorer restarts.
 - **Simple** — tray icon to configure, sensible defaults, no bloat.
 
 ## Status
