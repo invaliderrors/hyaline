@@ -92,6 +92,12 @@ pub fn is_taskbar_background(name: &str, grandparent: Option<(&str, &str)>) -> b
         && grandparent == Some(("Taskbar.TaskbarBackground", "BackgroundControl"))
 }
 
+/// True for the window classes of the primary and secondary-monitor taskbars.
+#[must_use]
+pub fn is_taskbar_window_class(class: &str) -> bool {
+    matches!(class, "Shell_TrayWnd" | "Shell_SecondaryTrayWnd")
+}
+
 /// Name of the event the helper creates as soon as it is loaded into an Explorer process,
 /// so the host never loads it twice into the same process.
 #[must_use]
@@ -201,6 +207,14 @@ mod tests {
         assert_eq!(retry_delay_ms(0), Some(500));
         assert_eq!(retry_delay_ms(119), Some(500));
         assert_eq!(retry_delay_ms(120), None);
+    }
+
+    #[test]
+    fn primary_and_secondary_taskbars_are_taskbar_windows() {
+        assert!(is_taskbar_window_class("Shell_TrayWnd"));
+        assert!(is_taskbar_window_class("Shell_SecondaryTrayWnd"));
+        assert!(!is_taskbar_window_class("Shell_TrayWndX"));
+        assert!(!is_taskbar_window_class("TrayNotifyWnd"));
     }
 
     #[test]
