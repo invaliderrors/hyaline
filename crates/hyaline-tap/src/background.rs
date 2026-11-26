@@ -8,7 +8,8 @@
 use crate::bindings::CoTaskMemFree;
 use crate::xamlom::{IVisualTreeService2, InstanceHandle};
 use hyaline_core::tap::{OPACITY, property_index};
-use std::cell::{Cell, RefCell};
+use std::cell::RefCell;
+use std::sync::atomic::{AtomicBool, Ordering};
 use windows_core::BSTR;
 
 struct Target {
@@ -19,7 +20,14 @@ struct Target {
 thread_local! {
     static SERVICE: RefCell<Option<IVisualTreeService2>> = const { RefCell::new(None) };
     static TARGETS: RefCell<Vec<Target>> = const { RefCell::new(Vec::new()) };
-    static CLEARED: Cell<bool> = const { Cell::new(false) };
+}
+
+/// Whether the taskbar should be cleared. Process-wide: every taskbar thread follows it.
+static CLEARED: AtomicBool = AtomicBool::new(false);
+
+/// Sets the state new background elements get, without touching existing ones.
+pub fn preset(cleared: bool) {
+    CLEARED.store(cleared, Ordering::Relaxed);
 }
 
 /// Starts managing a background element; hides it right away if the taskbar is cleared.
@@ -34,7 +42,7 @@ pub fn track(service: &IVisualTreeService2, handle: InstanceHandle) {
         handle,
         opacity_index,
     };
-    if CLEARED.get() {
+    if CLEARED.load(Ordering::Relaxed) {
         hide(service, &target);
     }
     TARGETS.with_borrow_mut(|targets| {
@@ -48,9 +56,10 @@ pub fn forget(handle: InstanceHandle) {
     TARGETS.with_borrow_mut(|targets| targets.retain(|t| t.handle != handle));
 }
 
-/// Hides or restores every managed element. Returns false if any element failed.
+/// Hides or restores every element managed on this thread and makes that the state for
+/// elements added later. Returns false if any element failed.
 pub fn set_cleared(cleared: bool) -> bool {
-    CLEARED.set(cleared);
+    preset(cleared);
     SERVICE.with_borrow(|service| {
         let Some(service) = service else {
             return true;

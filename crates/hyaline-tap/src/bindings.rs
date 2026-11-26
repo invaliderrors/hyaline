@@ -9,6 +9,26 @@ pub unsafe fn CoTaskMemFree(pv: *mut core::ffi::c_void) {
     unsafe { CoTaskMemFree(pv as _) }
 }
 #[inline]
+pub unsafe fn CreateEventW<P3>(
+    lpeventattributes: Option<*const SECURITY_ATTRIBUTES>,
+    bmanualreset: bool,
+    binitialstate: bool,
+    lpname: P3,
+) -> HANDLE
+where
+    P3: windows_core::Param<windows_core::PCWSTR>,
+{
+    windows_core::link!("kernel32.dll" "system" fn CreateEventW(lpeventattributes : *const SECURITY_ATTRIBUTES, bmanualreset : windows_core::BOOL, binitialstate : windows_core::BOOL, lpname : windows_core::PCWSTR) -> HANDLE);
+    unsafe {
+        CreateEventW(
+            lpeventattributes.unwrap_or(core::mem::zeroed()) as _,
+            bmanualreset.into(),
+            binitialstate.into(),
+            lpname.param().abi(),
+        )
+    }
+}
+#[inline]
 pub unsafe fn CreateWindowExW<P1, P2>(
     dwexstyle: u32,
     lpclassname: P1,
@@ -49,6 +69,23 @@ where
 pub unsafe fn DefWindowProcW(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPARAM) -> LRESULT {
     windows_core::link!("user32.dll" "system" fn DefWindowProcW(hwnd : HWND, msg : u32, wparam : WPARAM, lparam : LPARAM) -> LRESULT);
     unsafe { DefWindowProcW(hwnd, msg, wparam, lparam) }
+}
+#[inline]
+pub unsafe fn GetCurrentProcessId() -> u32 {
+    windows_core::link!("kernel32.dll" "system" fn GetCurrentProcessId() -> u32);
+    unsafe { GetCurrentProcessId() }
+}
+#[inline]
+pub unsafe fn GetModuleHandleExW<P1>(
+    dwflags: u32,
+    lpmodulename: P1,
+    phmodule: *mut HMODULE,
+) -> windows_core::BOOL
+where
+    P1: windows_core::Param<windows_core::PCWSTR>,
+{
+    windows_core::link!("kernel32.dll" "system" fn GetModuleHandleExW(dwflags : u32, lpmodulename : windows_core::PCWSTR, phmodule : *mut HMODULE) -> windows_core::BOOL);
+    unsafe { GetModuleHandleExW(dwflags, lpmodulename.param().abi(), phmodule as _) }
 }
 #[inline]
 pub unsafe fn GetModuleHandleW<P0>(lpmodulename: P0) -> HMODULE
@@ -122,6 +159,8 @@ pub const E_INVALIDARG: windows_core::HRESULT = windows_core::HRESULT(0x80070057
 pub const E_NOTIMPL: windows_core::HRESULT = windows_core::HRESULT(0x80004001_u32 as _);
 pub const E_POINTER: windows_core::HRESULT = windows_core::HRESULT(0x80004003_u32 as _);
 pub const E_UNEXPECTED: windows_core::HRESULT = windows_core::HRESULT(0x8000FFFF_u32 as _);
+pub const GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS: i32 = 4;
+pub const GET_MODULE_HANDLE_EX_FLAG_PIN: i32 = 1;
 #[repr(transparent)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
 pub struct HANDLE(pub *mut core::ffi::c_void);
@@ -345,6 +384,13 @@ pub struct LPARAM(pub isize);
 #[repr(transparent)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
 pub struct LRESULT(pub isize);
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub struct SECURITY_ATTRIBUTES {
+    pub nLength: u32,
+    pub lpSecurityDescriptor: *mut core::ffi::c_void,
+    pub bInheritHandle: windows_core::BOOL,
+}
 pub const SYNCHRONIZE: i32 = 1048576;
 pub const S_FALSE: windows_core::HRESULT = windows_core::HRESULT(0x1_u32 as _);
 pub type WAITORTIMERCALLBACK = WAITORTIMERCALLBACKFUNC;

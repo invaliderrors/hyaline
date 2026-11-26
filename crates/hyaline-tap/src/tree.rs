@@ -10,12 +10,13 @@ use crate::xamlom::{
     VisualElement,
 };
 use crate::{background, control};
-use hyaline_core::tap::{InitData, is_taskbar_background};
+use hyaline_core::tap::is_taskbar_background;
 use std::cell::RefCell;
 use std::collections::HashMap;
 use windows_core::{HRESULT, Interface, PCWSTR, implement};
 
 struct Node {
+    type_name: String,
     name: String,
     parent: InstanceHandle,
 }
@@ -38,14 +39,13 @@ impl SendService {
 }
 
 /// Subscribes to visual tree changes. Must not block: called from `SetSite`.
-pub fn start(service: IVisualTreeService2, init: InitData) {
+pub fn start(service: IVisualTreeService2) {
     let service = SendService(service);
     std::thread::spawn(move || {
         guard((), || {
             let service = service.into_inner();
             let callback: IVisualTreeServiceCallback2 = Callback {
                 service: service.clone(),
-                init,
             }
             .into();
             // SAFETY: `callback` is a valid COM object; the service keeps its own reference.
@@ -57,7 +57,6 @@ pub fn start(service: IVisualTreeService2, init: InitData) {
 #[implement(IVisualTreeServiceCallback2)]
 struct Callback {
     service: IVisualTreeService2,
-    init: InitData,
 }
 
 impl Callback {
@@ -70,22 +69,28 @@ impl Callback {
         }
         // SAFETY: XAML passes a valid NUL-terminated string (or null) for the callback's duration.
         let name = unsafe { wide_to_string(element.name) };
+        // SAFETY: as above.
+        let type_name = unsafe { wide_to_string(element.type_name) };
         let grandparent = NODES.with_borrow_mut(|nodes| {
             let grandparent = nodes
                 .get(&relation.parent)
                 .and_then(|parent| nodes.get(&parent.parent))
-                .map(|node| node.name.clone());
+                .map(|node| (node.type_name.clone(), node.name.clone()));
             nodes.insert(
                 handle,
                 Node {
+                    type_name,
                     name: name.clone(),
                     parent: relation.parent,
                 },
             );
             grandparent
         });
-        if is_taskbar_background(&name, grandparent.as_deref()) {
-            control::ensure(self.init);
+        let grandparent = grandparent
+            .as_ref()
+            .map(|(type_name, name)| (type_name.as_str(), name.as_str()));
+        if is_taskbar_background(&name, grandparent) {
+            control::ensure();
             background::track(&self.service, handle);
         }
     }

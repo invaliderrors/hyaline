@@ -4,15 +4,21 @@
 #![allow(clippy::ref_as_ptr, clippy::inline_always)]
 
 use crate::bindings::{
-    CLASS_E_NOAGGREGATION, E_INVALIDARG, E_NOTIMPL, E_UNEXPECTED, IClassFactory,
-    IClassFactory_Impl, IObjectWithSite, IObjectWithSite_Impl,
+    CLASS_E_NOAGGREGATION, CreateEventW, E_INVALIDARG, E_NOTIMPL, E_UNEXPECTED,
+    GetCurrentProcessId, IClassFactory, IClassFactory_Impl, IObjectWithSite, IObjectWithSite_Impl,
 };
 use crate::guard::guard;
-use crate::tree;
 use crate::xamlom::{IVisualTreeService2, IXamlDiagnostics};
-use hyaline_core::tap::InitData;
+use crate::{background, control, tree};
+use hyaline_core::tap::{InitData, marker_name};
 use std::ffi::c_void;
-use windows_core::{BOOL, BSTR, Error, GUID, IUnknown, Interface, Ref, Result, implement};
+use std::sync::atomic::{AtomicBool, Ordering};
+use windows_core::{
+    BOOL, BSTR, Error, GUID, HSTRING, IUnknown, Interface, PCWSTR, Ref, Result, implement,
+};
+
+/// Set once the visual tree subscription has started; later sites only update the host.
+static STARTED: AtomicBool = AtomicBool::new(false);
 
 #[implement(IClassFactory)]
 pub struct Factory;
@@ -55,8 +61,14 @@ impl IObjectWithSite_Impl for Site_Impl {
             unsafe { diagnostics.GetInitializationData(&raw mut data) }.ok()?;
             let init = InitData::decode(&data.display().to_string())
                 .ok_or_else(|| Error::from(E_INVALIDARG))?;
+            background::preset(init.cleared);
+            control::preset_host(init.host_pid);
+            if STARTED.swap(true, Ordering::Relaxed) {
+                return Ok(());
+            }
+            create_marker();
             let service: IVisualTreeService2 = site.cast()?;
-            tree::start(service, init);
+            tree::start(service);
             Ok(())
         })
     }
@@ -64,4 +76,13 @@ impl IObjectWithSite_Impl for Site_Impl {
     fn GetSite(&self, _iid: *const GUID, _out: *mut *mut c_void) -> Result<()> {
         Err(E_NOTIMPL.into())
     }
+}
+
+/// Creates the named event that tells `hyaline.exe` this Explorer already has the helper.
+/// The handle is kept for the life of Explorer on purpose.
+fn create_marker() {
+    // SAFETY: no arguments.
+    let name = HSTRING::from(marker_name(unsafe { GetCurrentProcessId() }));
+    // SAFETY: default security, NUL-terminated name alive for the call.
+    let _marker = unsafe { CreateEventW(None, true, false, PCWSTR(name.as_ptr())) };
 }

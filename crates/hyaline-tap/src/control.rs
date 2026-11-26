@@ -10,9 +10,10 @@ use crate::bindings::{
     WT_EXECUTEONLYONCE,
 };
 use crate::guard::guard;
-use hyaline_core::tap::{Command, InitData, WINDOW_CLASS};
+use hyaline_core::tap::{Command, WINDOW_CLASS};
 use std::cell::{Cell, RefCell};
 use std::ffi::c_void;
+use std::sync::atomic::{AtomicU32, Ordering};
 use windows_core::{HSTRING, PCWSTR};
 
 /// A pending wait for the host process to exit.
@@ -31,14 +32,24 @@ impl Drop for HostWatch {
     }
 }
 
+/// Process id of the current host. Process-wide so taskbar threads created later watch the
+/// right process.
+static HOST_PID: AtomicU32 = AtomicU32::new(0);
+
+/// Sets the host that windows created later will watch.
+pub fn preset_host(host_pid: u32) {
+    HOST_PID.store(host_pid, Ordering::Relaxed);
+}
+
 thread_local! {
     static WINDOW: Cell<Option<HWND>> = const { Cell::new(None) };
     static HOST: RefCell<Option<HostWatch>> = const { RefCell::new(None) };
 }
 
-/// Creates the window on the current (UI) thread once, applies the initial state and starts
-/// watching the host.
-pub fn ensure(init: InitData) {
+/// Creates the window on the current (UI) thread once and starts watching the host. If the
+/// host cannot be watched (already gone), restores the taskbar: never leave it cleared with
+/// nobody able to undo it.
+pub fn ensure() {
     if WINDOW.get().is_some() {
         return;
     }
@@ -76,8 +87,9 @@ pub fn ensure(init: InitData) {
         return;
     }
     WINDOW.set(Some(hwnd));
-    background::set_cleared(init.cleared);
-    watch_host(hwnd, init.host_pid);
+    if !watch_host(hwnd, HOST_PID.load(Ordering::Relaxed)) {
+        background::set_cleared(false);
+    }
 }
 
 unsafe extern "system" fn window_proc(
@@ -97,7 +109,14 @@ fn handle(hwnd: HWND, command: Command) -> bool {
     match command {
         Command::Clear => background::set_cleared(true),
         Command::Restore => background::set_cleared(false),
-        Command::Attach { host_pid } => watch_host(hwnd, host_pid),
+        Command::Attach { host_pid } => {
+            preset_host(host_pid);
+            let watching = watch_host(hwnd, host_pid);
+            if !watching {
+                background::set_cleared(false);
+            }
+            watching
+        }
     }
 }
 
