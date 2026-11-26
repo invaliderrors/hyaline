@@ -1,0 +1,101 @@
+name: Release
+
+# A version tag (vX.Y.Z, equal to the workspace version) builds, tests and publishes a release.
+# A manual run builds the same package as a workflow artifact and publishes nothing.
+on:
+  push:
+    tags: ['v*.*.*']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  release:
+    runs-on: windows-latest
+    timeout-minutes: 30
+    # Only runs on this repository's own refs (no pull request trigger). The write
+    # permissions are used only by the tag-gated steps below.
+    permissions:
+      contents: write # create the GitHub release
+      id-token: write # build provenance attestation
+      attestations: write
+    defaults:
+      run:
+        shell: pwsh
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Install toolchain from rust-toolchain.toml
+        run: rustup toolchain install
+      - name: Read the version
+        id: version
+        run: |
+          $version = (cargo metadata --format-version 1 --no-deps | ConvertFrom-Json).packages |
+            Where-Object name -eq 'hyaline' | Select-Object -ExpandProperty version
+          "version=$version" >> $env:GITHUB_OUTPUT
+      - name: Check the tag matches the version
+        if: startsWith(github.ref, 'refs/tags/')
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          if ($env:GITHUB_REF_NAME -ne "v$env:VERSION") {
+            throw "Tag $env:GITHUB_REF_NAME does not match the workspace version $env:VERSION"
+          }
+      - run: cargo fmt --all --check
+      - run: cargo clippy --workspace --all-targets --locked -- -D warnings
+      - run: cargo test --workspace --locked
+      - run: cargo build --workspace --release --locked
+      - name: Package
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          $zip = "hyaline-$env:VERSION-x64.zip"
+          New-Item -ItemType Directory dist | Out-Null
+          Compress-Archive -DestinationPath "dist/$zip" -Path `
+            target/release/hyaline.exe, target/release/hyaline_tap.dll, LICENSE
+          $hash = (Get-FileHash "dist/$zip" -Algorithm SHA256).Hash.ToLowerInvariant()
+          "$hash  $zip" | Set-Content dist/SHA256SUMS.txt
+          Get-Content dist/SHA256SUMS.txt
+      - name: Attest build provenance
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-path: |
+            dist/hyaline-*.zip
+            target/release/hyaline.exe
+            target/release/hyaline_tap.dll
+      - name: Upload the package (manual runs)
+        if: ${{ !startsWith(github.ref, 'refs/tags/') }}
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: hyaline-${{ steps.version.outputs.version }}-x64
+          path: dist/
+          if-no-files-found: error
+      - name: Release notes from CHANGELOG.md
+        if: startsWith(github.ref, 'refs/tags/')
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          $lines = Get-Content CHANGELOG.md
+          $start = ($lines | Select-String -Pattern "^## \[$([regex]::Escape($env:VERSION))\]" |
+            Select-Object -First 1).LineNumber
+          if (-not $start) { throw "CHANGELOG.md has no section for $env:VERSION" }
+          $notes = foreach ($line in $lines[$start..($lines.Count - 1)]) {
+            if ($line -match '^## \[') { break }
+            if ($line -notmatch '^\[[^\]]+\]: ') { $line }
+          }
+          ($notes -join "`n").Trim() | Set-Content notes.md
+      - name: Publish the release
+        if: startsWith(github.ref, 'refs/tags/')
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          gh release create $env:GITHUB_REF_NAME --verify-tag --title "Hyaline $env:VERSION" `
+            --notes-file notes.md "dist/hyaline-$env:VERSION-x64.zip" dist/SHA256SUMS.txt
