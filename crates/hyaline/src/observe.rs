@@ -5,9 +5,9 @@ use crate::bindings::{
     CloseHandle, DWMWA_CLOAKED, DwmGetWindowAttribute, EnumWindows, GW_OWNER, GWL_EXSTYLE,
     GetClassNameW, GetForegroundWindow, GetMonitorInfoW, GetShellWindow, GetWindow,
     GetWindowLongPtrW, GetWindowRect, GetWindowThreadProcessId, HMONITOR, HWND, IsIconic,
-    IsWindowVisible, IsZoomed, LPARAM, MONITOR_DEFAULTTONEAREST, MONITORINFO, MonitorFromWindow,
-    OpenProcess, PROCESS_QUERY_LIMITED_INFORMATION, QueryFullProcessImageNameW, RECT,
-    WS_EX_TOOLWINDOW,
+    IsWindowVisible, IsZoomed, LPARAM, MONITOR_DEFAULTTONEAREST, MONITOR_DEFAULTTONULL,
+    MONITORINFO, MonitorFromWindow, OpenProcess, PROCESS_QUERY_LIMITED_INFORMATION,
+    QueryFullProcessImageNameW, RECT, WS_EX_TOOLWINDOW,
 };
 use hyaline_core::states::Observed;
 use hyaline_core::windows::{WindowFacts, WindowKind, classify, foreground, is_shell_class};
@@ -17,7 +17,7 @@ use windows_core::{BOOL, PWSTR};
 const PROCESS_NAME_WIN32: u32 = 0;
 
 /// What is happening on the monitor of each of `taskbars`, in the same order.
-pub fn observe(taskbars: &[HWND], launcher_visible: bool) -> Vec<Observed> {
+pub fn observe(taskbars: &[HWND], launcher_visible: bool, alt_tab: bool) -> Vec<Observed> {
     let monitors: Vec<HMONITOR> = taskbars
         .iter()
         .map(|&taskbar| monitor_of(taskbar))
@@ -26,7 +26,12 @@ pub fn observe(taskbars: &[HWND], launcher_visible: bool) -> Vec<Observed> {
 
     // SAFETY: no arguments.
     let active = unsafe { GetForegroundWindow() };
-    let surface = foreground(&class_name(active), &exe_name(active), launcher_visible);
+    let surface = foreground(
+        &class_name(active),
+        &exe_name(active),
+        launcher_visible,
+        alt_tab,
+    );
     let active_monitor = monitor_of(active);
     for (observation, monitor) in observed.iter_mut().zip(&monitors) {
         // Task View covers every monitor; Start and Search open on one.
@@ -60,7 +65,9 @@ struct Scan<'a> {
 unsafe extern "system" fn visit(hwnd: HWND, scan: LPARAM) -> BOOL {
     // SAFETY: `scan` is the `Scan` passed by `observe`, alive for the whole enumeration.
     let scan = unsafe { &mut *(scan.0 as *mut Scan) };
-    let monitor = monitor_of(hwnd);
+    // Windows parked off-screen belong to no monitor.
+    // SAFETY: any window handle; returns null when the window is on no monitor.
+    let monitor = unsafe { MonitorFromWindow(hwnd, MONITOR_DEFAULTTONULL.cast_unsigned()) };
     let Some(index) = scan.monitors.iter().position(|&m| m == monitor) else {
         return BOOL(1);
     };
