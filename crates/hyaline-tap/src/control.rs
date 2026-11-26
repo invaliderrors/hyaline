@@ -10,7 +10,7 @@ use crate::bindings::{
     SYNCHRONIZE, UnregisterWait, WM_DWMCOMPOSITIONCHANGED, WNDCLASSW, WPARAM, WT_EXECUTEONLYONCE,
 };
 use crate::guard::guard;
-use hyaline_core::tap::{Command, WINDOW_CLASS, is_taskbar_window_class};
+use hyaline_core::tap::{Command, PROTOCOL_VERSION, WINDOW_CLASS, is_taskbar_window_class};
 use std::cell::{Cell, RefCell};
 use std::ffi::c_void;
 use std::sync::atomic::{AtomicU32, Ordering};
@@ -147,14 +147,18 @@ unsafe extern "system" fn window_proc(
     lparam: LPARAM,
 ) -> LRESULT {
     guard(LRESULT(1), || match Command::from_message(msg, wparam.0) {
+        Some(Command::Version) => LRESULT(PROTOCOL_VERSION.cast_signed()),
         Some(command) => LRESULT(isize::from(!handle(hwnd, command))),
         // SAFETY: the unmodified message goes to the default procedure.
         None => unsafe { DefWindowProcW(hwnd, msg, wparam, lparam) },
     })
 }
 
+/// Applies a command; returns whether it succeeded.
 fn handle(hwnd: HWND, command: Command) -> bool {
     match command {
+        // Answered with the version itself in `window_proc`.
+        Command::Version => true,
         Command::Clear => background::set_cleared(true),
         Command::Restore => restore(),
         Command::Attach { host_pid } => {
