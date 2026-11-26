@@ -23,8 +23,7 @@ pub fn load() -> (Config, Option<String>) {
             Err(error) => (
                 Config::default(),
                 Some(format!(
-                    "{} is invalid ({error}). Using default settings.",
-                    path.display()
+                    "Using default settings: config.toml is invalid ({error})."
                 )),
             ),
         },
@@ -32,8 +31,7 @@ pub fn load() -> (Config, Option<String>) {
         Err(error) => (
             Config::default(),
             Some(format!(
-                "Could not read {} ({error}). Using default settings.",
-                path.display()
+                "Using default settings: could not read config.toml ({error})."
             )),
         ),
     }
