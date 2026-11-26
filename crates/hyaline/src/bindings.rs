@@ -69,6 +69,11 @@ pub unsafe fn DispatchMessageW(lpmsg: *const MSG) -> LRESULT {
     unsafe { DispatchMessageW(lpmsg) }
 }
 #[inline]
+pub unsafe fn EnumWindows(lpenumfunc: WNDENUMPROC, lparam: LPARAM) -> windows_core::BOOL {
+    windows_core::link!("user32.dll" "system" fn EnumWindows(lpenumfunc : WNDENUMPROC, lparam : LPARAM) -> windows_core::BOOL);
+    unsafe { EnumWindows(lpenumfunc, lparam) }
+}
+#[inline]
 pub unsafe fn FindWindowExW<P2, P3>(
     hwndparent: Option<HWND>,
     hwndchildafter: Option<HWND>,
@@ -102,6 +107,11 @@ where
 pub unsafe fn FreeLibrary(hlibmodule: HMODULE) -> windows_core::BOOL {
     windows_core::link!("kernel32.dll" "system" fn FreeLibrary(hlibmodule : HMODULE) -> windows_core::BOOL);
     unsafe { FreeLibrary(hlibmodule) }
+}
+#[inline]
+pub unsafe fn GetClassNameW(hwnd: HWND, lpclassname: windows_core::PWSTR, nmaxcount: i32) -> i32 {
+    windows_core::link!("user32.dll" "system" fn GetClassNameW(hwnd : HWND, lpclassname : windows_core::PWSTR, nmaxcount : i32) -> i32);
+    unsafe { GetClassNameW(hwnd, lpclassname, nmaxcount) }
 }
 #[inline]
 pub unsafe fn GetLastError() -> u32 {
@@ -286,6 +296,10 @@ pub const SMTO_ABORTIFHUNG: i32 = 2;
 pub const SYNCHRONIZE: i32 = 1048576;
 pub type TIMERPROC =
     Option<unsafe extern "system" fn(param0: HWND, param1: u32, param2: usize, param3: u32)>;
+pub const WM_DISPLAYCHANGE: i32 = 126;
+pub const WM_DWMCOMPOSITIONCHANGED: i32 = 798;
+pub const WM_SETTINGCHANGE: i32 = 26;
+pub const WM_THEMECHANGED: i32 = 794;
 pub const WM_TIMER: i32 = 275;
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Default)]
@@ -301,6 +315,8 @@ pub struct WNDCLASSW {
     pub lpszMenuName: windows_core::PCWSTR,
     pub lpszClassName: windows_core::PCWSTR,
 }
+pub type WNDENUMPROC =
+    Option<unsafe extern "system" fn(param0: HWND, param1: LPARAM) -> windows_core::BOOL>;
 pub type WNDPROC = Option<
     unsafe extern "system" fn(param0: HWND, param1: u32, param2: WPARAM, param3: LPARAM) -> LRESULT,
 >;
