@@ -83,13 +83,34 @@ impl InitData {
     }
 }
 
-/// True for the main taskbar's background rectangles. Their grandparent is the
-/// `BackgroundControl`; the thumbnail flyout has look-alikes that must stay untouched.
+/// True for the main taskbar's background rectangles. Their grandparent, given as
+/// `(type, name)`, is the `Taskbar.TaskbarBackground` named `BackgroundControl`; the thumbnail
+/// flyout has look-alikes that must stay untouched.
 #[must_use]
-pub fn is_taskbar_background(name: &str, grandparent_name: Option<&str>) -> bool {
+pub fn is_taskbar_background(name: &str, grandparent: Option<(&str, &str)>) -> bool {
     matches!(name, "BackgroundFill" | "BackgroundStroke")
-        && grandparent_name == Some("BackgroundControl")
+        && grandparent == Some(("Taskbar.TaskbarBackground", "BackgroundControl"))
 }
+
+/// Name of the event the helper creates as soon as it is loaded into an Explorer process,
+/// so the host never loads it twice into the same process.
+#[must_use]
+pub fn marker_name(explorer_pid: u32) -> String {
+    format!(r"Local\HyalineTap-{explorer_pid}")
+}
+
+/// Delay before retry number `attempt` (0-based) of loading the helper, or `None` to give up.
+///
+/// Explorer's taskbar and XAML runtime come up seconds after Explorer starts (about 11 s
+/// measured after a restart), so loading is retried every 500 ms for one minute. The retries
+/// only run in that window, never while idle.
+#[must_use]
+pub const fn retry_delay_ms(attempt: u32) -> Option<u32> {
+    if attempt < 120 { Some(500) } else { None }
+}
+
+/// Name of the mutex that keeps `hyaline.exe` to a single instance per session.
+pub const INSTANCE_MUTEX: &str = r"Local\HyalineInstance";
 
 /// XAML property the helper sets to 0 to hide a background element. Its value is never
 /// set by Explorer, so clearing our local value restores the original exactly.
@@ -160,23 +181,31 @@ mod tests {
 
     #[test]
     fn only_main_taskbar_background_is_targeted() {
-        assert!(is_taskbar_background(
+        const CONTROL: (&str, &str) = ("Taskbar.TaskbarBackground", "BackgroundControl");
+        assert!(is_taskbar_background("BackgroundFill", Some(CONTROL)));
+        assert!(is_taskbar_background("BackgroundStroke", Some(CONTROL)));
+        assert!(!is_taskbar_background(
             "BackgroundFill",
-            Some("BackgroundControl")
-        ));
-        assert!(is_taskbar_background(
-            "BackgroundStroke",
-            Some("BackgroundControl")
+            Some(("Taskbar.TaskbarBackground", "HoverFlyoutBackgroundControl"))
         ));
         assert!(!is_taskbar_background(
             "BackgroundFill",
-            Some("HoverFlyoutBackgroundControl")
+            Some(("Some.Other.Control", "BackgroundControl"))
         ));
         assert!(!is_taskbar_background("BackgroundFill", None));
-        assert!(!is_taskbar_background(
-            "BackgroundElement",
-            Some("BackgroundControl")
-        ));
+        assert!(!is_taskbar_background("BackgroundElement", Some(CONTROL)));
+    }
+
+    #[test]
+    fn helper_load_is_retried_for_a_minute_then_given_up() {
+        assert_eq!(retry_delay_ms(0), Some(500));
+        assert_eq!(retry_delay_ms(119), Some(500));
+        assert_eq!(retry_delay_ms(120), None);
+    }
+
+    #[test]
+    fn marker_name_is_per_explorer_process() {
+        assert_eq!(marker_name(4321), r"Local\HyalineTap-4321");
     }
 
     #[test]
