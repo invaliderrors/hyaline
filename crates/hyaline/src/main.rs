@@ -58,6 +58,8 @@ thread_local! {
     static APPLIED: RefCell<Vec<(HWND, Appearance)>> = const { RefCell::new(Vec::new()) };
     /// Whether the helper was last told to hide the background.
     static CLEARED: Cell<Option<bool>> = const { Cell::new(None) };
+    /// Set by Exit: nothing may be applied any more.
+    static QUITTING: Cell<bool> = const { Cell::new(false) };
     /// True while the tray menu or the color picker is open (they run nested message loops,
     /// so another icon click could otherwise open a second one).
     static MENU_OPEN: Cell<bool> = const { Cell::new(false) };
@@ -143,24 +145,16 @@ fn run() -> Result<(), Box<dyn Error>> {
     Ok(())
 }
 
-/// True if any look the user configured needs the helper (anything but Windows' own look).
-fn needs_helper(looks: &Looks) -> bool {
-    Situation::ALL
-        .iter()
-        .map(|situation| looks.toggled(*situation))
-        .any(|toggled| toggled.enabled && toggled.look.mode != Mode::Normal)
-}
-
 /// Brings the taskbar to the current settings, loading the helper when needed.
 fn apply_settings(listener: HWND) -> Result<(), Box<dyn Error>> {
     let Some(dll) = TAP_DLL.get() else {
         return Ok(());
     };
-    match ensure_tap(dll, needs_helper(&SETTINGS.get()))? {
+    match ensure_tap(dll, SETTINGS.get().needs_helper())? {
         Ensure::Ready(windows) => {
             ATTEMPT.store(0, Ordering::Relaxed);
             attach(&windows)?;
-            refresh(true)?;
+            refresh(listener, true)?;
             schedule_reapply(listener);
         }
         Ensure::Idle => ATTEMPT.store(0, Ordering::Relaxed),
@@ -221,24 +215,34 @@ fn attach(windows: &[HWND]) -> Result<(), Box<dyn Error>> {
 /// Observes every monitor and gives each taskbar the look of its situation; only changes are
 /// applied unless `force`. Nothing is changed without the helper: if this process died, the
 /// helper is what puts Windows' own look back.
-fn refresh(force: bool) -> Result<(), Box<dyn Error>> {
+fn refresh(listener: HWND, force: bool) -> Result<(), Box<dyn Error>> {
     watcher::handled();
+    if QUITTING.get() {
+        return Ok(());
+    }
     let windows = tap_client::find_all();
     if windows.is_empty() {
         return Ok(());
     }
     let looks = SETTINGS.get();
     let taskbars = effect::taskbars();
-    let observed = observe::observe(&taskbars, watcher::launcher_visible());
+    let observed = observe::observe(&taskbars, watcher::launcher_visible(), watcher::alt_tab());
     let resolved: Vec<Appearance> = observed.iter().map(|o| looks.resolve(*o)).collect();
     let cleared = resolved.iter().any(|look| look.mode != Mode::Normal);
+    let mut resets_posted = false;
     if cleared {
-        apply_accents(&taskbars, &resolved, force)?;
+        resets_posted = apply_accents(&taskbars, &resolved, force)?;
     } else {
         // `Restore` below makes Explorer put back every accent.
         APPLIED.with_borrow_mut(Vec::clear);
     }
-    if force || CLEARED.get() != Some(cleared) {
+    let cleared_changed = CLEARED.get() != Some(cleared);
+    if !force && cleared && (resets_posted || cleared_changed) {
+        // Explorer handles the posted reset (or the helper's earlier restore) after this
+        // returns and may override the accent just applied; apply once more shortly after.
+        schedule_reapply(listener);
+    }
+    if force || cleared_changed {
         let command = if cleared {
             Command::Clear
         } else {
@@ -255,11 +259,12 @@ fn refresh(force: bool) -> Result<(), Box<dyn Error>> {
 /// Applies each taskbar's look. A taskbar resolving to Windows' own look while another does
 /// not gets Explorer's accent back (its background stays hidden: shown per monitor in a later
 /// phase). Resetting may make Explorer touch every taskbar, so the others are then re-applied.
+/// Returns whether any reset was posted.
 fn apply_accents(
     taskbars: &[HWND],
     resolved: &[Appearance],
     force: bool,
-) -> Result<(), Box<dyn Error>> {
+) -> Result<bool, Box<dyn Error>> {
     APPLIED.with_borrow_mut(|applied| {
         applied.retain(|(hwnd, _)| taskbars.contains(hwnd));
         let changed =
@@ -282,7 +287,7 @@ fn apply_accents(
         }
         applied.clear();
         applied.extend(taskbars.iter().copied().zip(resolved.iter().copied()));
-        Ok(())
+        Ok(!resets.is_empty())
     })
 }
 
@@ -311,7 +316,7 @@ fn on_wait(listener: HWND) {
         schedule_wait(listener);
         return;
     }
-    if let Err(error) = attach(&windows).and_then(|()| refresh(true)) {
+    if let Err(error) = attach(&windows).and_then(|()| refresh(listener, true)) {
         eprintln!("hyaline: applying the look failed: {error}");
     }
     schedule_reapply(listener);
@@ -410,6 +415,8 @@ fn on_menu(listener: HWND, anchor: bindings::POINT) {
 
 /// Puts Windows' own look back, removes the icon and quits.
 fn exit(listener: HWND) {
+    QUITTING.set(true);
+    watcher::stop();
     for hwnd in tap_client::find_all() {
         if let Err(error) = tap_client::send(hwnd, Command::Restore) {
             eprintln!("hyaline: restoring the taskbar failed: {error}");
@@ -473,7 +480,7 @@ unsafe extern "system" fn window_proc(
         return LRESULT(0);
     }
     if msg == watcher::RECOMPUTE {
-        if let Err(error) = refresh(false) {
+        if let Err(error) = refresh(hwnd, false) {
             eprintln!("hyaline: updating the look failed: {error}");
         }
         return LRESULT(0);
@@ -501,7 +508,7 @@ unsafe extern "system" fn window_proc(
         WM_TIMER if REAPPLY_TIMERS.iter().any(|&(id, _)| id == wparam.0) => {
             // SAFETY: our own window and timer id.
             let _ = unsafe { KillTimer(Some(hwnd), wparam.0) };
-            if let Err(error) = refresh(true) {
+            if let Err(error) = refresh(hwnd, true) {
                 eprintln!("hyaline: re-applying the look failed: {error}");
             }
             return LRESULT(0);
