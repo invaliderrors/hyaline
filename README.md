@@ -14,3 +14,17 @@ acrylic or tinted, and switch looks automatically based on what's on screen.
 ## Status
 
 Planning. See [`docs/PLAN.md`](docs/PLAN.md).
+
+## Build from source
+
+Requires [rustup](https://rustup.rs/) and Visual Studio Build Tools with the
+"Desktop development with C++" workload (MSVC + Windows SDK). The Rust version
+is pinned in `rust-toolchain.toml` and installed automatically.
+
+```sh
+cargo build --release
+```
+
+## License
+
+[MIT](LICENSE)
