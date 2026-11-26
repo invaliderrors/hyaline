@@ -7,6 +7,9 @@ version tag. Hyaline follows [Semantic Versioning](https://semver.org/).
    versions in `crates/hyaline/Cargo.toml` and `crates/hyaline-tap/Cargo.toml`, run
    `cargo build` to update `Cargo.lock`, and move the `[Unreleased]` entries in `CHANGELOG.md`
    into a new `## [X.Y.Z] - YYYY-MM-DD` section (with its compare link at the bottom).
+   If anything in `crates/hyaline-tap` (or what it uses from `hyaline-core`) changed since the
+   last release, bump `PROTOCOL_VERSION` in `crates/hyaline-core/src/tap.rs`: otherwise users
+   keep running the old helper, without a notice, until Explorer restarts.
 2. Run the manual checklists in `docs/testing.md` that cover the changes. Open a pull request
    and merge it once CI passes.
 3. Optional: run the `Release` workflow manually on `main` (Actions → Release → Run workflow)

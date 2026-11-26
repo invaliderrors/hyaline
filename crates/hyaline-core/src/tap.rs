@@ -13,9 +13,11 @@ const MSG_RESTORE: u32 = WM_APP + 2;
 const MSG_ATTACH: u32 = WM_APP + 3;
 const MSG_VERSION: u32 = WM_APP + 4;
 
-/// What the helper answers to [`Command::Version`]. Bump it whenever a command changes meaning:
-/// Explorer keeps a loaded helper until it restarts, so a newer `hyaline.exe` can meet an older
-/// helper (which answers 0, like any window answering an unknown message).
+/// What the helper answers to [`Command::Version`]. Bump it whenever the helper changes (code
+/// or command meaning): Explorer keeps a loaded helper until it restarts, so a newer
+/// `hyaline.exe` can meet an older helper, and only a different answer makes it ask for an
+/// Explorer restart instead of using the old one. Helpers older than this query answer 0, like
+/// any window answering an unknown message.
 pub const PROTOCOL_VERSION: usize = 1;
 
 /// Posted by the helper to the host window when one of its windows is created (helper loaded,
