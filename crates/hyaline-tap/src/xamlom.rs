@@ -6,7 +6,7 @@
 #![allow(non_snake_case, clippy::too_many_arguments)]
 
 use std::ffi::c_void;
-use windows_core::{BSTR, HRESULT, IUnknown, IUnknown_Vtbl, PCWSTR, interface};
+use windows_core::{BSTR, HRESULT, IUnknown, PCWSTR, interface};
 
 /// Opaque handle XAML Diagnostics uses for objects (`InstanceHandle`).
 pub type InstanceHandle = u64;
@@ -86,7 +86,7 @@ pub struct Rect {
 
 #[interface("AA7A8931-80E4-4FEC-8F3B-553F87B4966E")]
 pub unsafe trait IVisualTreeServiceCallback: IUnknown {
-    fn OnVisualTreeChange(
+    pub fn OnVisualTreeChange(
         &self,
         relation: ParentChildRelation,
         element: VisualElement,
@@ -96,7 +96,7 @@ pub unsafe trait IVisualTreeServiceCallback: IUnknown {
 
 #[interface("BAD9EB88-AE77-4397-B948-5FA2DB0A19EA")]
 pub unsafe trait IVisualTreeServiceCallback2: IVisualTreeServiceCallback {
-    fn OnElementStateChanged(
+    pub fn OnElementStateChanged(
         &self,
         element: InstanceHandle,
         element_state: i32,
@@ -106,16 +106,16 @@ pub unsafe trait IVisualTreeServiceCallback2: IVisualTreeServiceCallback {
 
 #[interface("A593B11A-D17F-48BB-8F66-83910731C8A5")]
 pub unsafe trait IVisualTreeService: IUnknown {
-    fn AdviseVisualTreeChange(&self, callback: *mut c_void) -> HRESULT;
-    fn UnadviseVisualTreeChange(&self, callback: *mut c_void) -> HRESULT;
-    fn GetEnums(&self, count: *mut u32, enums: *mut *mut c_void) -> HRESULT;
-    fn CreateInstance(
+    pub fn AdviseVisualTreeChange(&self, callback: *mut c_void) -> HRESULT;
+    pub fn UnadviseVisualTreeChange(&self, callback: *mut c_void) -> HRESULT;
+    pub fn GetEnums(&self, count: *mut u32, enums: *mut *mut c_void) -> HRESULT;
+    pub fn CreateInstance(
         &self,
         type_name: *const u16,
         value: *const u16,
         instance: *mut InstanceHandle,
     ) -> HRESULT;
-    fn GetPropertyValuesChain(
+    pub fn GetPropertyValuesChain(
         &self,
         instance: InstanceHandle,
         source_count: *mut u32,
@@ -123,35 +123,35 @@ pub unsafe trait IVisualTreeService: IUnknown {
         property_count: *mut u32,
         values: *mut *mut PropertyChainValue,
     ) -> HRESULT;
-    fn SetProperty(
+    pub fn SetProperty(
         &self,
         instance: InstanceHandle,
         value: InstanceHandle,
         property_index: u32,
     ) -> HRESULT;
-    fn ClearProperty(&self, instance: InstanceHandle, property_index: u32) -> HRESULT;
-    fn GetCollectionCount(&self, instance: InstanceHandle, size: *mut u32) -> HRESULT;
-    fn GetCollectionElements(
+    pub fn ClearProperty(&self, instance: InstanceHandle, property_index: u32) -> HRESULT;
+    pub fn GetCollectionCount(&self, instance: InstanceHandle, size: *mut u32) -> HRESULT;
+    pub fn GetCollectionElements(
         &self,
         instance: InstanceHandle,
         start: u32,
         count: *mut u32,
         values: *mut *mut c_void,
     ) -> HRESULT;
-    fn AddChild(&self, parent: InstanceHandle, child: InstanceHandle, index: u32) -> HRESULT;
-    fn RemoveChild(&self, parent: InstanceHandle, index: u32) -> HRESULT;
-    fn ClearChildren(&self, parent: InstanceHandle) -> HRESULT;
+    pub fn AddChild(&self, parent: InstanceHandle, child: InstanceHandle, index: u32) -> HRESULT;
+    pub fn RemoveChild(&self, parent: InstanceHandle, index: u32) -> HRESULT;
+    pub fn ClearChildren(&self, parent: InstanceHandle) -> HRESULT;
 }
 
 #[interface("130F5136-EC43-4F61-89C7-9801A36D2E95")]
 pub unsafe trait IVisualTreeService2: IVisualTreeService {
-    fn GetPropertyIndex(
+    pub fn GetPropertyIndex(
         &self,
         object: InstanceHandle,
         property_name: PCWSTR,
         index: *mut u32,
     ) -> HRESULT;
-    fn GetProperty(
+    pub fn GetProperty(
         &self,
         object: InstanceHandle,
         property_index: u32,
@@ -161,22 +161,29 @@ pub unsafe trait IVisualTreeService2: IVisualTreeService {
 
 #[interface("18C9E2B6-3F43-4116-9F2B-FF935D7770D2")]
 pub unsafe trait IXamlDiagnostics: IUnknown {
-    fn GetDispatcher(&self, dispatcher: *mut *mut c_void) -> HRESULT;
-    fn GetUiLayer(&self, layer: *mut *mut c_void) -> HRESULT;
-    fn GetApplication(&self, application: *mut *mut c_void) -> HRESULT;
-    fn GetIInspectableFromHandle(
+    pub fn GetDispatcher(&self, dispatcher: *mut *mut c_void) -> HRESULT;
+    pub fn GetUiLayer(&self, layer: *mut *mut c_void) -> HRESULT;
+    pub fn GetApplication(&self, application: *mut *mut c_void) -> HRESULT;
+    pub fn GetIInspectableFromHandle(
         &self,
         instance: InstanceHandle,
         inspectable: *mut *mut c_void,
     ) -> HRESULT;
-    fn GetHandleFromIInspectable(
+    pub fn GetHandleFromIInspectable(
         &self,
         inspectable: *mut c_void,
         instance: *mut InstanceHandle,
     ) -> HRESULT;
-    fn HitTest(&self, rect: Rect, count: *mut u32, handles: *mut *mut InstanceHandle)
-    -> HRESULT;
-    fn RegisterInstance(&self, inspectable: *mut c_void, instance: *mut InstanceHandle)
-    -> HRESULT;
-    fn GetInitializationData(&self, data: *mut BSTR) -> HRESULT;
+    pub fn HitTest(
+        &self,
+        rect: Rect,
+        count: *mut u32,
+        handles: *mut *mut InstanceHandle,
+    ) -> HRESULT;
+    pub fn RegisterInstance(
+        &self,
+        inspectable: *mut c_void,
+        instance: *mut InstanceHandle,
+    ) -> HRESULT;
+    pub fn GetInitializationData(&self, data: *mut BSTR) -> HRESULT;
 }
