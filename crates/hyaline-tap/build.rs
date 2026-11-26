@@ -26,6 +26,7 @@ fn main() {
         "E_POINTER",
         "E_UNEXPECTED",
         "EnumWindows",
+        "FindWindowW",
         "GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS",
         "GET_MODULE_HANDLE_EX_FLAG_PIN",
         "GetClassNameW",

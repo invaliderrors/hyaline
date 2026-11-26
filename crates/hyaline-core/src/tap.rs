@@ -4,6 +4,9 @@
 /// Window class of the helper's message-only window inside Explorer.
 pub const WINDOW_CLASS: &str = "HyalineTapWindow";
 
+/// Window class of `hyaline.exe`'s hidden top-level window.
+pub const HOST_WINDOW_CLASS: &str = "HyalineHostWindow";
+
 const WM_APP: u32 = 0x8000;
 const MSG_CLEAR: u32 = WM_APP + 1;
 const MSG_RESTORE: u32 = WM_APP + 2;
@@ -14,6 +17,11 @@ const MSG_VERSION: u32 = WM_APP + 4;
 /// Explorer keeps a loaded helper until it restarts, so a newer `hyaline.exe` can meet an older
 /// helper (which answers 0, like any window answering an unknown message).
 pub const PROTOCOL_VERSION: usize = 1;
+
+/// Posted by the helper to the host window when one of its windows is created (helper loaded,
+/// or a new taskbar thread such as a plugged-in monitor's), so the host applies the look
+/// right away instead of on its next check.
+pub const HELPER_READY: u32 = WM_APP + 16;
 
 /// A request from `hyaline.exe` to the helper, sent as a window message.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

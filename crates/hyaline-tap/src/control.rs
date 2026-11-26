@@ -4,13 +4,17 @@
 
 use crate::background;
 use crate::bindings::{
-    CloseHandle, CreateWindowExW, DefWindowProcW, EnumWindows, GetClassNameW, GetCurrentProcessId,
-    GetModuleHandleW, GetWindowThreadProcessId, HANDLE, HINSTANCE, HWND, HWND_MESSAGE, INFINITE,
-    LPARAM, LRESULT, OpenProcess, PostMessageW, RegisterClassW, RegisterWaitForSingleObject,
-    SYNCHRONIZE, UnregisterWait, WM_DWMCOMPOSITIONCHANGED, WNDCLASSW, WPARAM, WT_EXECUTEONLYONCE,
+    CloseHandle, CreateWindowExW, DefWindowProcW, EnumWindows, FindWindowW, GetClassNameW,
+    GetCurrentProcessId, GetModuleHandleW, GetWindowThreadProcessId, HANDLE, HINSTANCE, HWND,
+    HWND_MESSAGE, INFINITE, LPARAM, LRESULT, OpenProcess, PostMessageW, RegisterClassW,
+    RegisterWaitForSingleObject, SYNCHRONIZE, UnregisterWait, WM_DWMCOMPOSITIONCHANGED, WNDCLASSW,
+    WPARAM, WT_EXECUTEONLYONCE,
 };
 use crate::guard::guard;
-use hyaline_core::tap::{Command, PROTOCOL_VERSION, WINDOW_CLASS, is_taskbar_window_class};
+use hyaline_core::tap::{
+    Command, HELPER_READY, HOST_WINDOW_CLASS, PROTOCOL_VERSION, WINDOW_CLASS,
+    is_taskbar_window_class,
+};
 use std::cell::{Cell, RefCell};
 use std::ffi::c_void;
 use std::sync::atomic::{AtomicU32, Ordering};
@@ -89,6 +93,18 @@ pub fn ensure() {
     WINDOW.set(Some(hwnd));
     if !watch_host(hwnd, HOST_PID.load(Ordering::Relaxed)) {
         restore();
+    }
+    notify_host();
+}
+
+/// Tells the host a helper window now exists, so it applies the look without waiting.
+fn notify_host() {
+    let class = HSTRING::from(HOST_WINDOW_CLASS);
+    // SAFETY: the class name outlives the call.
+    let host = unsafe { FindWindowW(PCWSTR(class.as_ptr()), PCWSTR::null()) };
+    if !host.0.is_null() {
+        // SAFETY: posting to another process's window; failure only delays the host.
+        let _ = unsafe { PostMessageW(Some(host), HELPER_READY, WPARAM(0), LPARAM(0)) };
     }
 }
 

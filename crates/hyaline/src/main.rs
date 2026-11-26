@@ -30,7 +30,10 @@ use bindings::{
 use hyaline_core::appearance::{Appearance, Mode};
 use hyaline_core::config::Config;
 use hyaline_core::states::{Looks, Situation, Toggled};
-use hyaline_core::tap::{Command, INSTANCE_MUTEX, InitData, RestartGuard, retry_delay_ms};
+use hyaline_core::tap::{
+    Command, HELPER_READY, HOST_WINDOW_CLASS, INSTANCE_MUTEX, InitData, RestartGuard,
+    retry_delay_ms,
+};
 use std::cell::{Cell, RefCell};
 use std::error::Error;
 use std::path::{Path, PathBuf};
@@ -522,18 +525,19 @@ fn exit(listener: HWND) {
 fn create_listener_window() -> Result<HWND, Box<dyn Error>> {
     // SAFETY: null name = this executable's module.
     let instance = HINSTANCE(unsafe { GetModuleHandleW(PCWSTR::null()) }.0);
-    let class = w!("HyalineHostWindow");
+    let class_name = HSTRING::from(HOST_WINDOW_CLASS);
+    let class = PCWSTR(class_name.as_ptr());
     let window_class = WNDCLASSW {
         lpfnWndProc: Some(window_proc),
         hInstance: instance,
         lpszClassName: class,
         ..Default::default()
     };
-    // SAFETY: `window_class` is fully initialized and its strings are static.
+    // SAFETY: `window_class` is fully initialized; `class_name` outlives both calls.
     if unsafe { RegisterClassW(&raw const window_class) }.0 == 0 {
         return Err(windows_core::Error::from_thread().into());
     }
-    // SAFETY: registered class and static strings; the window is never shown.
+    // SAFETY: registered class and live strings; the window is never shown.
     let hwnd = unsafe {
         CreateWindowExW(
             0,
@@ -571,6 +575,13 @@ unsafe extern "system" fn window_proc(
             on_explorer_restart(hwnd);
         }
         try_load(hwnd);
+        return LRESULT(0);
+    }
+    if msg == HELPER_READY {
+        // Also sent for a new taskbar's helper window (monitor plugged in): attach it too.
+        // SAFETY: our own window and timer id; killing a timer that is not set is harmless.
+        let _ = unsafe { KillTimer(Some(hwnd), WAIT_TIMER) };
+        on_wait(hwnd);
         return LRESULT(0);
     }
     if msg == watcher::RECOMPUTE {
