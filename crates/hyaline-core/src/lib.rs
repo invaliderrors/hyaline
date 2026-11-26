@@ -4,3 +4,4 @@ pub mod appearance;
 pub mod config;
 pub mod states;
 pub mod tap;
+pub mod windows;
