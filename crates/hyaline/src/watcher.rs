@@ -7,35 +7,45 @@
 use crate::bindings::{
     AppVisibility, CLSCTX_INPROC_SERVER, CoCreateInstance, EVENT_OBJECT_CLOAKED,
     EVENT_OBJECT_DESTROY, EVENT_OBJECT_HIDE, EVENT_OBJECT_LOCATIONCHANGE, EVENT_OBJECT_UNCLOAKED,
-    EVENT_SYSTEM_FOREGROUND, EVENT_SYSTEM_MINIMIZEEND, HMONITOR, HWINEVENTHOOK, HWND,
-    IAppVisibility, IAppVisibilityEvents, IAppVisibilityEvents_Impl, LPARAM,
+    EVENT_SYSTEM_FOREGROUND, EVENT_SYSTEM_MINIMIZEEND, EVENT_SYSTEM_MOVESIZEEND,
+    EVENT_SYSTEM_SWITCHEND, EVENT_SYSTEM_SWITCHSTART, GA_ROOT, GetAncestor, HMONITOR,
+    HWINEVENTHOOK, HWND, IAppVisibility, IAppVisibilityEvents, IAppVisibilityEvents_Impl, LPARAM,
     MONITOR_APP_VISIBILITY, OBJID_WINDOW, PostMessageW, SetWinEventHook, WINEVENT_OUTOFCONTEXT,
     WINEVENT_SKIPOWNPROCESS, WM_APP, WPARAM,
 };
-use std::cell::{Cell, RefCell};
+use std::cell::RefCell;
+use std::sync::atomic::{AtomicBool, AtomicIsize, Ordering};
 use windows_core::{BOOL, Result, implement};
 
 /// Posted to the listener window when something on screen may have changed.
 pub const RECOMPUTE: u32 = WM_APP.cast_unsigned() + 2;
 
+// Process-wide: the Start-menu sink may be called on a COM worker thread.
+/// The window that receives `RECOMPUTE` (0 = stopped).
+static TARGET: AtomicIsize = AtomicIsize::new(0);
+static PENDING: AtomicBool = AtomicBool::new(false);
+/// True while the Alt+Tab switcher is open.
+static ALT_TAB: AtomicBool = AtomicBool::new(false);
+
 thread_local! {
-    static TARGET: Cell<Option<HWND>> = const { Cell::new(None) };
-    static PENDING: Cell<bool> = const { Cell::new(false) };
     static VISIBILITY: RefCell<Option<IAppVisibility>> = const { RefCell::new(None) };
 }
 
 /// Starts watching; events are delivered through this thread's message loop.
 pub fn start(listener: HWND) {
-    TARGET.set(Some(listener));
+    TARGET.store(listener.0 as isize, Ordering::Relaxed);
+    // Only the events that can change a situation (not mouse capture, menus, scrolling...).
     let ranges = [
-        (EVENT_SYSTEM_FOREGROUND, EVENT_SYSTEM_MINIMIZEEND),
+        (EVENT_SYSTEM_FOREGROUND, EVENT_SYSTEM_FOREGROUND),
+        (EVENT_SYSTEM_MOVESIZEEND, EVENT_SYSTEM_MOVESIZEEND),
+        (EVENT_SYSTEM_SWITCHSTART, EVENT_SYSTEM_MINIMIZEEND),
         (EVENT_OBJECT_DESTROY, EVENT_OBJECT_HIDE),
         (EVENT_OBJECT_LOCATIONCHANGE, EVENT_OBJECT_LOCATIONCHANGE),
         (EVENT_OBJECT_CLOAKED, EVENT_OBJECT_UNCLOAKED),
     ];
     for (first, last) in ranges {
         // SAFETY: out-of-context hook with a valid callback; it lives until the process exits.
-        unsafe {
+        let hook = unsafe {
             SetWinEventHook(
                 first.cast_unsigned(),
                 last.cast_unsigned(),
@@ -46,15 +56,23 @@ pub fn start(listener: HWND) {
                 (WINEVENT_OUTOFCONTEXT | WINEVENT_SKIPOWNPROCESS).cast_unsigned(),
             )
         };
+        if hook.0.is_null() {
+            eprintln!("hyaline: watching events {first:#x}-{last:#x} failed");
+        }
     }
     // SAFETY: COM is initialized on this thread by `main`.
     let visibility: Result<IAppVisibility> =
         unsafe { CoCreateInstance(&AppVisibility, None, CLSCTX_INPROC_SERVER) };
-    if let Ok(visibility) = visibility {
-        let sink: IAppVisibilityEvents = Sink.into();
-        // SAFETY: valid sink; the service keeps its own reference.
-        let _ = unsafe { visibility.Advise(&sink) };
-        VISIBILITY.set(Some(visibility));
+    match visibility {
+        Ok(visibility) => {
+            let sink: IAppVisibilityEvents = Sink.into();
+            // SAFETY: valid sink; the service keeps its own reference.
+            if let Err(error) = unsafe { visibility.Advise(&sink) } {
+                eprintln!("hyaline: watching the Start menu failed: {error}");
+            }
+            VISIBILITY.set(Some(visibility));
+        }
+        Err(error) => eprintln!("hyaline: Start menu visibility is unavailable: {error}"),
     }
 }
 
@@ -68,35 +86,63 @@ pub fn launcher_visible() -> bool {
     })
 }
 
-/// Asks for a recompute; at most one message is pending at a time.
+/// Whether the Alt+Tab switcher is open.
+pub fn alt_tab() -> bool {
+    ALT_TAB.load(Ordering::Relaxed)
+}
+
+/// Asks for a recompute; at most one message is pending at a time. Callable from any thread.
 pub fn request() {
-    if PENDING.replace(true) {
+    if PENDING.swap(true, Ordering::AcqRel) {
         return;
     }
-    if let Some(target) = TARGET.get() {
-        // SAFETY: our own window; failure only skips one recompute.
-        let _ = unsafe { PostMessageW(Some(target), RECOMPUTE, WPARAM(0), LPARAM(0)) };
+    let target = TARGET.load(Ordering::Relaxed);
+    if target != 0 {
+        // SAFETY: posting to our own window from any thread; failure only skips one recompute.
+        let _ = unsafe {
+            PostMessageW(
+                Some(HWND(target as *mut _)),
+                RECOMPUTE,
+                WPARAM(0),
+                LPARAM(0),
+            )
+        };
     }
 }
 
 /// Marks the pending recompute as handled, so the next event posts a new one.
 pub fn handled() {
-    PENDING.set(false);
+    PENDING.store(false, Ordering::Release);
+}
+
+/// Stops posting recomputes (used when quitting).
+pub fn stop() {
+    TARGET.store(0, Ordering::Relaxed);
 }
 
 unsafe extern "system" fn on_event(
     _hook: HWINEVENTHOOK,
-    _event: u32,
-    _hwnd: HWND,
+    event: u32,
+    hwnd: HWND,
     id_object: i32,
     id_child: i32,
     _thread: u32,
     _time: u32,
 ) {
-    // Only the windows themselves, not their carets, cursors, scroll bars or children.
-    if id_object == OBJID_WINDOW && id_child == 0 {
-        request();
+    match event.cast_signed() {
+        EVENT_SYSTEM_SWITCHSTART => ALT_TAB.store(true, Ordering::Relaxed),
+        EVENT_SYSTEM_SWITCHEND => ALT_TAB.store(false, Ordering::Relaxed),
+        _ => {}
     }
+    // Only top-level windows themselves, not carets, cursors, scroll bars or child windows.
+    if id_object != OBJID_WINDOW || id_child != 0 {
+        return;
+    }
+    // SAFETY: plain query; a stale handle returns null, which is not equal to `hwnd`.
+    if !hwnd.0.is_null() && unsafe { GetAncestor(hwnd, GA_ROOT.cast_unsigned()) } != hwnd {
+        return;
+    }
+    request();
 }
 
 #[implement(IAppVisibilityEvents)]
