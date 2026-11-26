@@ -11,6 +11,7 @@ fn embed_resources() {
     println!("cargo:rerun-if-changed=build.rs");
     println!("cargo:rerun-if-changed=hyaline.rc");
     println!("cargo:rerun-if-changed=../../assets/logo.ico");
+    println!("cargo:rerun-if-changed=hyaline.exe.manifest");
     let version = env!("CARGO_PKG_VERSION");
     let macros = [
         format!("VERSION_MAJOR={}", env!("CARGO_PKG_VERSION_MAJOR")),
@@ -30,8 +31,8 @@ const APIS: &[&str] = &[
     "CC_FULLOPEN",
     "CC_RGBINIT",
     "CheckMenuRadioItem",
-    "CHOOSECOLORW",
     "ChooseColorW",
+    "CHOOSECOLORW",
     "CloseHandle",
     "CLSCTX_INPROC_SERVER",
     "CoCreateInstance",
@@ -58,9 +59,15 @@ const APIS: &[&str] = &[
     "EVENT_OBJECT_UNCLOAKED",
     "EVENT_SYSTEM_FOREGROUND",
     "EVENT_SYSTEM_MINIMIZEEND",
+    "EVENT_SYSTEM_MINIMIZESTART",
+    "EVENT_SYSTEM_MOVESIZEEND",
+    "EVENT_SYSTEM_SWITCHEND",
+    "EVENT_SYSTEM_SWITCHSTART",
     "FindWindowExW",
     "FindWindowW",
     "FreeLibrary",
+    "GA_ROOT",
+    "GetAncestor",
     "GetClassNameW",
     "GetCursorPos",
     "GetForegroundWindow",
@@ -99,6 +106,7 @@ const APIS: &[&str] = &[
     "MF_SEPARATOR",
     "MF_STRING",
     "MONITOR_DEFAULTTONEAREST",
+    "MONITOR_DEFAULTTONULL",
     "MonitorFromWindow",
     "MONITORINFO",
     "NIF_ICON",

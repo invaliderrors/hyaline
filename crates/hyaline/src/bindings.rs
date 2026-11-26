@@ -194,6 +194,11 @@ pub unsafe fn FreeLibrary(hlibmodule: HMODULE) -> windows_core::BOOL {
     unsafe { FreeLibrary(hlibmodule) }
 }
 #[inline]
+pub unsafe fn GetAncestor(hwnd: HWND, gaflags: u32) -> HWND {
+    windows_core::link!("user32.dll" "system" fn GetAncestor(hwnd : HWND, gaflags : u32) -> HWND);
+    unsafe { GetAncestor(hwnd, gaflags) }
+}
+#[inline]
 pub unsafe fn GetClassNameW(hwnd: HWND, lpclassname: windows_core::PWSTR, nmaxcount: i32) -> i32 {
     windows_core::link!("user32.dll" "system" fn GetClassNameW(hwnd : HWND, lpclassname : windows_core::PWSTR, nmaxcount : i32) -> i32);
     unsafe { GetClassNameW(hwnd, lpclassname, nmaxcount) }
@@ -652,8 +657,13 @@ pub const EVENT_OBJECT_LOCATIONCHANGE: i32 = 32779;
 pub const EVENT_OBJECT_UNCLOAKED: i32 = 32792;
 pub const EVENT_SYSTEM_FOREGROUND: i32 = 3;
 pub const EVENT_SYSTEM_MINIMIZEEND: i32 = 23;
+pub const EVENT_SYSTEM_MINIMIZESTART: i32 = 22;
+pub const EVENT_SYSTEM_MOVESIZEEND: i32 = 11;
+pub const EVENT_SYSTEM_SWITCHEND: i32 = 21;
+pub const EVENT_SYSTEM_SWITCHSTART: i32 = 20;
 pub const E_FAIL: windows_core::HRESULT = windows_core::HRESULT(0x80004005_u32 as _);
 pub type FARPROC = Option<unsafe extern "system" fn() -> isize>;
+pub const GA_ROOT: i32 = 2;
 pub const GWL_EXSTYLE: i32 = -20;
 pub const GW_OWNER: i32 = 4;
 #[repr(transparent)]
@@ -999,6 +1009,7 @@ pub struct MONITORINFO {
 }
 pub type MONITOR_APP_VISIBILITY = i32;
 pub const MONITOR_DEFAULTTONEAREST: i32 = 2;
+pub const MONITOR_DEFAULTTONULL: i32 = 0;
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub struct MSG {
