@@ -13,7 +13,7 @@ crate-type = ["cdylib"]
 workspace = true
 
 [dependencies]
-hyaline-core = { version = "0.0.0", path = "../hyaline-core" }
+hyaline-core = { version = "1.0.0", path = "../hyaline-core" }
 windows-core = "0.100.0"
 
 [build-dependencies]

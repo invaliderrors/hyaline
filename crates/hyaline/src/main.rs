@@ -15,6 +15,7 @@ mod explorer;
 mod inject;
 mod observe;
 mod tap_client;
+mod tap_file;
 mod tray;
 mod watcher;
 
@@ -125,11 +126,7 @@ fn run() -> Result<(), Box<dyn Error>> {
     if unsafe { GetLastError() } == ERROR_ALREADY_EXISTS.cast_unsigned() {
         return Ok(());
     }
-    let dll = std::env::current_exe()?.with_file_name("hyaline_tap.dll");
-    if !dll.is_file() {
-        return Err(format!("{} not found", dll.display()).into());
-    }
-    let _ = TAP_DLL.set(dll);
+    let _ = TAP_DLL.set(tap_file::loadable(&tap_file::shipped()?));
     // SAFETY: constant, NUL-terminated message name.
     let taskbar_created = unsafe { RegisterWindowMessageW(w!("TaskbarCreated")) };
     TASKBAR_CREATED.store(taskbar_created, Ordering::Relaxed);
