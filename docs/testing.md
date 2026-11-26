@@ -61,3 +61,19 @@ Last run: 2026-11-25, same machine, transparency effects off. Modes were set by 
 | T20 | Change a setting in the menu, restart Hyaline | Same look after restart | pass (owner, 2026-11-25) |
 | T21 | Keyboard: Win+B, arrow to the H icon, Enter (or Shift+F10) | Menu opens at the icon | pass (owner, 2026-11-25) |
 | T22 | Explorer restarted, then Hyaline started right away (cold load) | Look applied once the helper is up; a kill 40 ms after start leaves the default | pass |
+
+## Phase 5 — Dynamic states
+
+Last run: 2026-11-25, same machine. No simulated input: a test window created by the test
+script changes only its own state; situations were configured through `config.toml`.
+
+| # | Action | Expected | Result |
+|---|---|---|---|
+| T23 | Start with a version 1 `config.toml` | Its look becomes the Desktop look; file unchanged until a setting changes | pass |
+| T24 | Maximized = red, Visible = blue, both on; then Maximized off; then both off | Highest-priority situation that is happening wins | pass |
+| T25 | Test window: normal → maximized → minimized → maximized → closed (Maximized = red) | Desktop look ↔ red, switching on each change | pass (within 1.5 s each) |
+| T26 | Hyaline idle for 30 s | No measurable CPU; private memory < 5 MB | pass (0 ms CPU, 2.1 MB) |
+| T27 | Window classification on a real desktop | Minimized, cloaked, tool, owned and shell windows ignored | pass (checked against an independent script) |
+| T28 | Show desktop (Win+D), then bring windows back | Desktop look, then the window situation's look | **owner check** |
+| T29 | Turn on Start menu / Search / Task View looks in the menu; open each | Their looks while open; previous look after closing | **owner check** |
+| T30 | Menu: a situation's submenu — On, Appearance, Color…, Opacity | Changes apply and persist | **owner check** |
