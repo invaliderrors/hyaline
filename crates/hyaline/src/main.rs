@@ -282,9 +282,13 @@ fn refresh(listener: HWND, force: bool) -> Result<(), Box<dyn Error>> {
             .iter()
             .any(|hwnd| !applied.iter().any(|(h, _)| h == hwnd))
     });
+    let mut failure: Option<Box<dyn Error>> = None;
     let mut resets_posted = false;
     if cleared {
-        resets_posted = apply_accents(&taskbars, &resolved, force)?;
+        match apply_accents(&taskbars, &resolved, force) {
+            Ok(posted) => resets_posted = posted,
+            Err(error) => failure = Some(error),
+        }
     } else {
         // `Restore` below makes Explorer put back every accent.
         APPLIED.with_borrow_mut(Vec::clear);
@@ -301,18 +305,27 @@ fn refresh(listener: HWND, force: bool) -> Result<(), Box<dyn Error>> {
         } else {
             Command::Restore
         };
+        let mut sent = true;
         for &hwnd in &windows {
-            tap_client::send(hwnd, command)?;
+            if let Err(error) = tap_client::send(hwnd, command) {
+                sent = false;
+                failure.get_or_insert(error.into());
+            }
         }
-        CLEARED.set(Some(cleared));
+        // Unchanged after a failure, so the next refresh sends it again.
+        if sent {
+            CLEARED.set(Some(cleared));
+        }
     }
-    Ok(())
+    failure.map_or(Ok(()), Err)
 }
 
 /// Applies each taskbar's look. A taskbar resolving to Windows' own look while another does
-/// not gets Explorer's accent back (its background stays hidden: shown per monitor in a later
-/// phase). Resetting may make Explorer touch every taskbar, so the others are then re-applied.
-/// Returns whether any reset was posted.
+/// not gets Explorer's accent back (its background stays hidden: per-monitor hiding is not
+/// supported). Resetting may make Explorer touch every taskbar, so the others are then
+/// re-applied. Returns whether any reset was posted. A taskbar that fails is left out of
+/// `APPLIED` (retried on the next refresh) and does not stop the others; the first error is
+/// returned after all were tried.
 fn apply_accents(
     taskbars: &[HWND],
     resolved: &[Appearance],
@@ -332,15 +345,23 @@ fn apply_accents(
             effect::reset(hwnd);
         }
         let reapply_all = force || !resets.is_empty();
-        for (&hwnd, look) in taskbars.iter().zip(resolved) {
-            if look.mode == Mode::Normal || !(reapply_all || changed(hwnd, look)) {
+        let mut done = Vec::with_capacity(taskbars.len());
+        let mut failure = None;
+        for (&hwnd, &look) in taskbars.iter().zip(resolved) {
+            if look.mode != Mode::Normal
+                && (reapply_all || changed(hwnd, &look))
+                && let Err(error) = effect::apply_to(hwnd, &look)
+            {
+                failure.get_or_insert(error);
                 continue;
             }
-            effect::apply_to(hwnd, look)?;
+            done.push((hwnd, look));
         }
-        applied.clear();
-        applied.extend(taskbars.iter().copied().zip(resolved.iter().copied()));
-        Ok(!resets.is_empty())
+        *applied = done;
+        match failure {
+            Some(error) => Err(error.into()),
+            None => Ok(!resets.is_empty()),
+        }
     })
 }
 
