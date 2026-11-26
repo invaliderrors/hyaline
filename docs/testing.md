@@ -44,3 +44,18 @@ taskbar's row. Phase 2 T3, T5 and T8 were re-run with this build and pass.
 | T11 | Transparency on: note the default pixels; run Hyaline; force a red tint on `Shell_TrayWnd`; kill Hyaline | Pixels identical to the noted default | pass (`#212121 #202129 …` before and after) |
 | T12 | While running, restart Explorer | Clear again once the helper reloads (≤ 20 s) | pass (13 s) |
 | T13 | While running, switch Windows to light mode, then back to dark | Still clear in both | pass |
+
+## Phase 4 — Tray and settings
+
+Last run: 2026-11-25, same machine, transparency effects off. Modes were set by writing
+`%APPDATA%\Hyaline\config.toml` and restarting Hyaline (no simulated input).
+
+| # | Action | Expected | Result |
+|---|---|---|---|
+| T14 | With Hyaline running, restart Explorer | Tray icon back; look re-applied | pass (12 s) |
+| T15 | Tray menu → Exit | Windows' default look; icon gone; process exits | **owner check** |
+| T16 | Invalid `config.toml` (`mode = "neon"`), start Hyaline | Default look; one notification titled "Hyaline" explaining the error; file unchanged | pass |
+| T17 | Tray menu → Start with Windows, twice | `HKCU\…\Run\Hyaline` = quoted exe path, then removed | **owner check** |
+| T18 | Tray menu → Appearance: Normal → Clear → Normal → Clear | Default ↔ clear each time; still one `hyaline_tap.dll` | **owner check** |
+| T19 | Config: normal / opaque `#FF0000` / clear `#0000FF` 50 % / clear 0 % / blur / acrylic | Default / solid red / blue over wallpaper / wallpaper / solid tint (effects off) | pass |
+| T20 | Change a setting in the menu, restart Hyaline | Same look after restart | **owner check** |
