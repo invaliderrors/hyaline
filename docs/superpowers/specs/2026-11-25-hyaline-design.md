@@ -52,8 +52,9 @@ adding features TranslucentTB lacks. Feature parity with TranslucentTB's core is
 | B | Rust, exe only, no code in Explorer | Lightest and safest, but on Win11 the taskbar's own background hides the effect — fails "works perfectly". |
 | C | C++/WinRT, same split as A (what TranslucentTB does) | Most prior art, but no memory safety inside Explorer and a heavier build setup. |
 
-**Chosen: A** (owner delegated the technical choice). Fallback: if Phase 1 shows the XAML
-Diagnostics side is impractical in Rust, only the DLL switches to C++; the exe stays Rust.
+**Chosen: A** (owner delegated the technical choice). **Confirmed by Phase 1**
+(`docs/research/win11-taskbar.md`): B shows no visible effect on build 26300, and a Rust DLL loads into
+Explorer through XAML Diagnostics and clears the background. The C++ fallback is no longer needed.
 
 ## 5. Architecture
 
@@ -86,7 +87,24 @@ Visible window → Desktop. A disabled state falls through to the next.
 - Explorer restart: registered `TaskbarCreated` message. Display/DPI/theme/power:
   `WM_DISPLAYCHANGE`, `WM_DPICHANGED`, `WM_SETTINGCHANGE`, `WM_POWERBROADCAST`.
 - Explorer resetting the effect: re-apply on the events that trigger it (measured in Phase 1).
-  Hooking Explorer's own calls is a last resort only.
+  Hooking Explorer's own calls is a last resort only. (Phase 1: no resets observed.)
+
+**Binding rules from Phase 1** (details and evidence: `docs/research/win11-taskbar.md`):
+- Target only `Rectangle` `BackgroundFill` / `BackgroundStroke` whose grandparent is
+  `Taskbar.TaskbarBackground` named `BackgroundControl` — never the hover-flyout copy.
+- Find the `Fill` property index via `GetPropertyValuesChain` (never hard-code; `GetPropertyIndex` fails).
+- Before overriding, `GetProperty` and keep the original brush; restore by setting it back
+  (`ClearProperty` leaves no fill; handles do not survive a session).
+- Inject **once** per Explorer instance (the DLL cannot unload); all later changes go over IPC.
+  Re-inject only after `TaskbarCreated`.
+- If the host app exits or crashes, the DLL restores the original brushes by itself (waits on the host
+  process handle).
+- Apply the accent with `AccentFlags = 2` so the configured color is used instead of the system accent.
+  `GetWindowCompositionAttribute` cannot read the accent back — track applied state.
+- Re-apply on visual-tree `Add` events for the target elements (Explorer recreating the taskbar).
+- Detection: Start = `IAppVisibility` launcher visible; Search = foreground `SearchHost.exe`
+  `Windows.UI.Core.CoreWindow` while launcher not visible; Task View = foreground
+  `XamlExplorerHostIslandWindow` in `explorer.exe`.
 
 ## 6. Performance budgets (targets, measured in Phase 6)
 
@@ -104,7 +122,10 @@ Visible window → Desktop. A disabled state falls through to the next.
 - Rust via **rustup** (replaces the standalone 1.93 install), latest stable, **edition 2024**,
   pinned in `rust-toolchain.toml`. Dependencies pinned in `Cargo.lock`.
 - Latest Visual Studio Build Tools (MSVC linker) + latest Windows SDK.
-- Crates kept minimal: `windows` (Microsoft's Win32/COM/WinRT bindings), `serde` + `toml`. Anything else needs a reason in its PR.
+- Windows bindings: **`windows-bindgen` + `windows-core` (0.100 line)**, generating only the APIs used.
+  The monolithic `windows` crate is frozen at 0.62.2 (Oct 2025) and is not used. The XAML Diagnostics
+  interfaces (`xamlom.h`) are not in Windows metadata and are declared by hand with `#[interface]`.
+- Other crates: `serde` + `toml`. Anything else needs a reason in its PR.
 - `rustfmt` + `clippy` (pedantic, warnings = errors). GitHub Actions on `windows-latest`.
 
 ## 8. Phases
@@ -115,8 +136,8 @@ Each phase ends **working, tested and releasable**. Nothing in a later phase is 
 |---|---|---|---|
 | 0 | **Foundation** | rustup + Build Tools + SDK; cargo workspace (`hyaline`, `hyaline_tap`, `hyaline-core`); fmt/clippy config; CI; LICENSE, CHANGELOG | `cargo build/test/clippy` green locally and in CI on an empty skeleton |
 | 1 | **Research spike** (throwaway) | On build 26300, verify: effect via `SetWindowCompositionAttribute` from outside; XAML Diagnostics injection from Rust; taskbar background element names; `IAppVisibility`; Search/Task View detection; how often Explorer resets the effect | Findings written to `docs/research/win11-taskbar.md`; spike code deleted; design updated if anything changed |
-| 2 | **Core effect** | exe applies one fixed appearance to every taskbar on every monitor; re-applies after Explorer restart; restores on exit | Manual checklist passes; rules/appearance types unit tested |
-| 3 | **Explorer helper** | `hyaline_tap.dll` makes the XAML background transparent; fail-safe restore; reload after Explorer restart | True clear/blur/acrylic visible on Win11; killing hyaline or the DLL failing leaves a normal taskbar |
+| 2 | **Explorer helper** | `hyaline.exe` injects `hyaline_tap.dll` once; DLL clears the taskbar background (saving the original brush) and restores it on request, on host exit and on host crash; re-inject after Explorer restart | Taskbar background toggles off/on with no Explorer restart; killing `hyaline.exe` restores the default taskbar |
+| 3 | **Core effect** | exe applies one fixed appearance (clear) to every taskbar via the accent API; re-applies after Explorer restart; restores on exit | Clear taskbar visible on Win11 with transparency effects on and off; rules/appearance types unit tested |
 | 4 | **Tray + config** | tray menu for mode/color/opacity; TOML config; single instance; start with Windows | Settings survive restart; invalid config falls back to defaults with a visible notice |
 | 5 | **Dynamic states** | All six states, per monitor, priority rules, per-state settings | State machine fully unit tested; manual checklist across 2 monitors passes |
 | 6 | **Hardening + performance** | sleep/resume, display/DPI changes, hot-plug, theme, "transparency effects" off, high contrast, Explorer crash-loop backoff; budgets measured | Every budget in §6 met with numbers recorded; `docs/testing.md` checklist complete |
@@ -140,3 +161,8 @@ Each phase ends **working, tested and releasable**. Nothing in a later phase is 
 
 - **License:** MIT.
 - **GitHub repository:** public (used for CI and releases).
+- **Phase order (2026-11-25, after Phase 1):** Explorer helper moved before Core effect, because the
+  effect alone has no visible result on Windows 11.
+- **Pending:** with "Transparency effects" off, Windows draws blur/acrylic as solid; clear and tint still
+  work. Proposed: Hyaline does not change the system setting; blur/acrylic entries show a hint in the
+  tray menu when it is off.
