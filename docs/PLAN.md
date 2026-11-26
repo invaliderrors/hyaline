@@ -11,4 +11,4 @@ Design: [`superpowers/specs/2026-11-25-hyaline-design.md`](superpowers/specs/202
 | 4 | Tray + config | done |
 | 5 | Dynamic states | done |
 | 6 | Hardening + performance | done |
-| 7 | Release 1.0 | not started |
+| 7 | Release 1.0 | done — [v1.0.0](https://github.com/invaliderrors/hyaline/releases/tag/v1.0.0) |
