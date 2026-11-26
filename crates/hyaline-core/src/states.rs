@@ -36,61 +36,84 @@ pub struct Observed {
     pub visible_window: bool,
 }
 
-/// The look picked for each situation; `None` means the situation is turned off and the next
-/// one down decides. The desktop look is always on.
+/// A situation's look and whether the situation is turned on. Turning it off keeps the look
+/// for when it is turned on again.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Toggled {
+    pub enabled: bool,
+    pub look: Appearance,
+}
+
+impl Toggled {
+    const fn off() -> Self {
+        Self {
+            enabled: false,
+            look: Appearance {
+                mode: Mode::Clear,
+                color: crate::appearance::Rgb { r: 0, g: 0, b: 0 },
+                opacity: 0,
+            },
+        }
+    }
+}
+
+/// The look picked for each situation. A situation that is turned off lets the next one down
+/// decide; the desktop look is always on.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Looks {
     pub desktop: Appearance,
-    pub visible_window: Option<Appearance>,
-    pub maximized_window: Option<Appearance>,
-    pub start: Option<Appearance>,
-    pub search: Option<Appearance>,
-    pub task_view: Option<Appearance>,
+    pub visible_window: Toggled,
+    pub maximized_window: Toggled,
+    pub start: Toggled,
+    pub search: Toggled,
+    pub task_view: Toggled,
 }
 
 impl Default for Looks {
     fn default() -> Self {
         Self {
             desktop: Appearance::default(),
-            visible_window: None,
-            maximized_window: Some(Appearance {
-                mode: Mode::Normal,
-                ..Appearance::default()
-            }),
-            start: None,
-            search: None,
-            task_view: None,
+            visible_window: Toggled::off(),
+            maximized_window: Toggled {
+                enabled: true,
+                look: Appearance {
+                    mode: Mode::Normal,
+                    ..Appearance::default()
+                },
+            },
+            start: Toggled::off(),
+            search: Toggled::off(),
+            task_view: Toggled::off(),
         }
     }
 }
 
 impl Looks {
-    /// The look for a situation (`None` if turned off).
+    /// A situation's setting; the desktop is always reported as on.
     #[must_use]
-    pub const fn get(&self, situation: Situation) -> Option<Appearance> {
+    pub const fn toggled(&self, situation: Situation) -> Toggled {
         match situation {
             Situation::Start => self.start,
             Situation::Search => self.search,
             Situation::TaskView => self.task_view,
             Situation::MaximizedWindow => self.maximized_window,
             Situation::VisibleWindow => self.visible_window,
-            Situation::Desktop => Some(self.desktop),
+            Situation::Desktop => Toggled {
+                enabled: true,
+                look: self.desktop,
+            },
         }
     }
 
-    /// Sets the look for a situation. The desktop cannot be turned off, so `None` keeps it.
-    pub fn set(&mut self, situation: Situation, look: Option<Appearance>) {
+    /// Changes a situation's setting. The desktop cannot be turned off; only its look changes.
+    pub fn set(&mut self, situation: Situation, toggled: Toggled) {
         match situation {
-            Situation::Start => self.start = look,
-            Situation::Search => self.search = look,
-            Situation::TaskView => self.task_view = look,
-            Situation::MaximizedWindow => self.maximized_window = look,
-            Situation::VisibleWindow => self.visible_window = look,
-            Situation::Desktop => {
-                if let Some(look) = look {
-                    self.desktop = look;
-                }
-            }
+            Situation::Start => self.start = toggled,
+            Situation::Search => self.search = toggled,
+            Situation::TaskView => self.task_view = toggled,
+            Situation::MaximizedWindow => self.maximized_window = toggled,
+            Situation::VisibleWindow => self.visible_window = toggled,
+            Situation::Desktop => self.desktop = toggled.look,
         }
     }
 
@@ -108,8 +131,8 @@ impl Looks {
         Situation::ALL
             .iter()
             .zip(happening)
-            .filter(|(_, happening)| *happening)
-            .find_map(|(situation, _)| self.get(*situation))
+            .map(|(situation, happening)| (self.toggled(*situation), happening))
+            .find_map(|(toggled, happening)| (happening && toggled.enabled).then_some(toggled.look))
             .unwrap_or(self.desktop)
     }
 }
@@ -127,14 +150,21 @@ mod tests {
         }
     }
 
+    fn on(look: Appearance) -> Toggled {
+        Toggled {
+            enabled: true,
+            look,
+        }
+    }
+
     fn all_enabled() -> Looks {
         Looks {
             desktop: look(Mode::Clear),
-            visible_window: Some(look(Mode::Opaque)),
-            maximized_window: Some(look(Mode::Normal)),
-            start: Some(look(Mode::Acrylic)),
-            search: Some(look(Mode::Blur)),
-            task_view: Some(Appearance {
+            visible_window: on(look(Mode::Opaque)),
+            maximized_window: on(look(Mode::Normal)),
+            start: on(look(Mode::Acrylic)),
+            search: on(look(Mode::Blur)),
+            task_view: on(Appearance {
                 opacity: 90,
                 ..look(Mode::Opaque)
             }),
@@ -170,7 +200,7 @@ mod tests {
             search: false,
             ..everything
         };
-        assert_eq!(looks.resolve(task_view_down), looks.task_view.unwrap());
+        assert_eq!(looks.resolve(task_view_down), looks.task_view.look);
         let windows = Observed {
             maximized_window: true,
             visible_window: true,
@@ -186,32 +216,39 @@ mod tests {
 
     #[test]
     fn disabled_situation_falls_through() {
-        let looks = Looks {
-            maximized_window: None,
-            ..all_enabled()
-        };
+        let mut looks = all_enabled();
+        looks.maximized_window.enabled = false;
         let maximized = Observed {
             maximized_window: true,
             visible_window: true,
             ..Observed::default()
         };
         assert_eq!(looks.resolve(maximized), look(Mode::Opaque));
-        let looks = Looks {
-            visible_window: None,
-            ..looks
-        };
+        looks.visible_window.enabled = false;
         assert_eq!(looks.resolve(maximized), look(Mode::Clear));
+    }
+
+    #[test]
+    fn turning_off_keeps_the_look_for_later() {
+        let mut looks = all_enabled();
+        looks.start.enabled = false;
+        assert_eq!(looks.start.look, look(Mode::Acrylic));
     }
 
     #[test]
     fn defaults_follow_the_owner_decisions() {
         let looks = Looks::default();
         assert_eq!(looks.desktop, Appearance::default());
-        assert_eq!(looks.maximized_window.map(|a| a.mode), Some(Mode::Normal));
-        assert_eq!(looks.visible_window, None);
-        assert_eq!(looks.start, None);
-        assert_eq!(looks.search, None);
-        assert_eq!(looks.task_view, None);
+        assert!(looks.maximized_window.enabled);
+        assert_eq!(looks.maximized_window.look.mode, Mode::Normal);
+        for off in [
+            looks.visible_window,
+            looks.start,
+            looks.search,
+            looks.task_view,
+        ] {
+            assert!(!off.enabled);
+        }
     }
 
     #[test]
@@ -228,12 +265,18 @@ mod tests {
             ]
         );
         let mut looks = Looks::default();
-        looks.set(Situation::Search, Some(look(Mode::Blur)));
-        assert_eq!(looks.get(Situation::Search), Some(look(Mode::Blur)));
-        looks.set(Situation::Desktop, None);
+        looks.set(Situation::Search, on(look(Mode::Blur)));
+        assert_eq!(looks.toggled(Situation::Search), on(look(Mode::Blur)));
+        looks.set(
+            Situation::Desktop,
+            Toggled {
+                enabled: false,
+                look: look(Mode::Opaque),
+            },
+        );
         assert_eq!(
-            looks.get(Situation::Desktop),
-            Some(Appearance::default()),
+            looks.toggled(Situation::Desktop),
+            on(look(Mode::Opaque)),
             "desktop cannot be turned off"
         );
     }
