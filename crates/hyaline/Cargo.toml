@@ -14,4 +14,5 @@ hyaline-core = { version = "0.0.0", path = "../hyaline-core" }
 windows-core = "0.100.0"
 
 [build-dependencies]
+embed-resource = "3.0.12"
 windows-bindgen = "0.100.0"
