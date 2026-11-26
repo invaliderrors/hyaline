@@ -4,7 +4,7 @@ Design: [`superpowers/specs/2026-11-25-hyaline-design.md`](superpowers/specs/202
 
 | # | Phase | Status |
 |---|---|---|
-| 0 | Foundation | not started |
+| 0 | Foundation | done |
 | 1 | Research spike (Win11 taskbar internals) | not started |
 | 2 | Core effect | not started |
 | 3 | Explorer helper | not started |
