@@ -68,8 +68,9 @@ thread_local! {
     /// True while the tray menu or the color picker is open (they run nested message loops,
     /// so another icon click could otherwise open a second one).
     static MENU_OPEN: Cell<bool> = const { Cell::new(false) };
-    /// Whether the running Explorer has the helper loaded (so its restart may be our fault).
-    static INJECTED: Cell<bool> = const { Cell::new(false) };
+    /// The Explorer process that has, or may have, the helper loaded (so its restart may be
+    /// our fault).
+    static INJECTED: Cell<Option<u32>> = const { Cell::new(None) };
     static RESTARTS: RefCell<RestartGuard> = RefCell::new(RestartGuard::default());
     static STARTED: Instant = Instant::now();
     /// Whether the "older helper loaded" notice was shown for the running Explorer.
@@ -164,14 +165,18 @@ fn apply_settings(listener: HWND) -> Result<(), Box<dyn Error>> {
         return Ok(());
     };
     if RESTARTS.with_borrow(RestartGuard::paused) {
-        return Ok(());
+        // Puts Windows' look back if a helper is still there.
+        return refresh(listener, true);
     }
     let needed = SETTINGS.get().needs_helper() && !effect::high_contrast();
     match ensure_tap(dll, needed)? {
         Ensure::Ready(windows) => {
             ATTEMPT.store(0, Ordering::Relaxed);
             attach(&windows)?;
-            refresh(listener, true)?;
+            // A failing taskbar is retried by the re-apply below; it must not stop Hyaline.
+            if let Err(error) = refresh(listener, true) {
+                eprintln!("hyaline: applying the look failed: {error}");
+            }
             schedule_reapply(listener);
         }
         Ensure::Idle => ATTEMPT.store(0, Ordering::Relaxed),
@@ -199,7 +204,7 @@ fn apply_settings(listener: HWND) -> Result<(), Box<dyn Error>> {
 fn ensure_tap(dll: &Path, needed: bool) -> Result<Ensure, Box<dyn Error>> {
     let windows = tap_client::find_all();
     if !windows.is_empty() {
-        INJECTED.set(true);
+        INJECTED.set(explorer::taskbar_process_id());
         return Ok(Ensure::Ready(windows));
     }
     let Some(explorer) = explorer::taskbar_process_id() else {
@@ -210,7 +215,7 @@ fn ensure_tap(dll: &Path, needed: bool) -> Result<Ensure, Box<dyn Error>> {
         });
     };
     if explorer::has_helper(explorer) {
-        INJECTED.set(true);
+        INJECTED.set(Some(explorer));
         if tap_client::stale_present() {
             return Ok(Ensure::Stale);
         }
@@ -228,12 +233,14 @@ fn ensure_tap(dll: &Path, needed: bool) -> Result<Ensure, Box<dyn Error>> {
     };
     // HRESULT_FROM_WIN32(ERROR_NOT_FOUND): Explorer's XAML runtime is not up yet.
     let xaml_not_ready = HRESULT((0x8007_0000_u32 | ERROR_NOT_FOUND.cast_unsigned()).cast_signed());
+    // Set before loading: a helper that crashes Explorer while loading makes the call fail.
+    INJECTED.set(Some(explorer));
     match inject::inject(dll, explorer, init) {
-        Ok(()) => {
-            INJECTED.set(true);
-            Ok(Ensure::Pending)
+        Ok(()) => Ok(Ensure::Pending),
+        Err(error) if error.code() == xaml_not_ready => {
+            INJECTED.set(None);
+            Ok(Ensure::NotReady)
         }
-        Err(error) if error.code() == xaml_not_ready => Ok(Ensure::NotReady),
         Err(error) => Err(error.into()),
     }
 }
@@ -262,7 +269,8 @@ fn refresh(listener: HWND, force: bool) -> Result<(), Box<dyn Error>> {
     let looks = SETTINGS.get();
     let taskbars = effect::taskbars();
     let observed = observe::observe(&taskbars, watcher::launcher_visible(), watcher::alt_tab());
-    let high_contrast = effect::high_contrast();
+    // High contrast (accessibility) or a crash-loop pause: Windows' look everywhere.
+    let step_aside = effect::high_contrast() || RESTARTS.with_borrow(RestartGuard::paused);
     let windows_look = Appearance {
         mode: Mode::Normal,
         ..Appearance::default()
@@ -270,7 +278,7 @@ fn refresh(listener: HWND, force: bool) -> Result<(), Box<dyn Error>> {
     let resolved: Vec<Appearance> = observed
         .iter()
         .map(|o| {
-            if high_contrast {
+            if step_aside {
                 windows_look
             } else {
                 looks.resolve(*o)
@@ -567,11 +575,14 @@ unsafe extern "system" fn window_proc(
     lparam: LPARAM,
 ) -> LRESULT {
     if msg == TASKBAR_CREATED.load(Ordering::Relaxed) {
-        // Explorer restarted: it dropped our icon and the helper with it.
+        // Explorer restarted (it dropped our icon and the helper with it), or asks for icons
+        // again without restarting (e.g. after a DPI change): only a new process counts.
         ATTEMPT.store(0, Ordering::Relaxed);
-        STALE_NOTIFIED.set(false);
         tray::add(hwnd);
-        if INJECTED.replace(false) {
+        let current = explorer::taskbar_process_id();
+        if INJECTED.get().is_some_and(|pid| Some(pid) != current) {
+            INJECTED.set(None);
+            STALE_NOTIFIED.set(false);
             on_explorer_restart(hwnd);
         }
         try_load(hwnd);
