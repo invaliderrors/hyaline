@@ -22,20 +22,25 @@ use bindings::{
     COINIT_APARTMENTTHREADED, CoInitializeEx, CreateMutexW, CreateWindowExW, DefWindowProcW,
     DispatchMessageW, ERROR_ALREADY_EXISTS, ERROR_NOT_FOUND, GetLastError, GetMessageW,
     GetModuleHandleW, HINSTANCE, HWND, KillTimer, LPARAM, LRESULT, MB_ICONERROR, MB_OK, MSG,
-    MessageBoxW, PostQuitMessage, RegisterClassW, RegisterWindowMessageW, SetTimer,
-    TranslateMessage, WM_DISPLAYCHANGE, WM_DWMCOMPOSITIONCHANGED, WM_SETTINGCHANGE,
-    WM_THEMECHANGED, WM_TIMER, WNDCLASSW, WPARAM,
+    MessageBoxW, PBT_APMRESUMEAUTOMATIC, PBT_APMRESUMESUSPEND, PostQuitMessage, RegisterClassW,
+    RegisterWindowMessageW, SPI_SETHIGHCONTRAST, SetTimer, TranslateMessage, WM_DISPLAYCHANGE,
+    WM_DWMCOMPOSITIONCHANGED, WM_POWERBROADCAST, WM_SETTINGCHANGE, WM_THEMECHANGED, WM_TIMER,
+    WNDCLASSW, WPARAM,
 };
 use hyaline_core::appearance::{Appearance, Mode};
 use hyaline_core::config::Config;
 use hyaline_core::states::{Looks, Situation, Toggled};
-use hyaline_core::tap::{Command, INSTANCE_MUTEX, InitData, retry_delay_ms};
+use hyaline_core::tap::{
+    Command, HELPER_READY, HOST_WINDOW_CLASS, INSTANCE_MUTEX, InitData, RestartGuard,
+    retry_delay_ms,
+};
 use std::cell::{Cell, RefCell};
 use std::error::Error;
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 use std::sync::OnceLock;
 use std::sync::atomic::{AtomicU32, Ordering};
+use std::time::Instant;
 use windows_core::{HRESULT, HSTRING, PCWSTR, w};
 
 static TAP_DLL: OnceLock<PathBuf> = OnceLock::new();
@@ -63,6 +68,13 @@ thread_local! {
     /// True while the tray menu or the color picker is open (they run nested message loops,
     /// so another icon click could otherwise open a second one).
     static MENU_OPEN: Cell<bool> = const { Cell::new(false) };
+    /// The Explorer process that has, or may have, the helper loaded (so its restart may be
+    /// our fault).
+    static INJECTED: Cell<Option<u32>> = const { Cell::new(None) };
+    static RESTARTS: RefCell<RestartGuard> = RefCell::new(RestartGuard::default());
+    static STARTED: Instant = Instant::now();
+    /// Whether the "older helper loaded" notice was shown for the running Explorer.
+    static STALE_NOTIFIED: Cell<bool> = const { Cell::new(false) };
 }
 
 /// Outcome of [`ensure_tap`].
@@ -75,6 +87,8 @@ enum Ensure {
     NotReady,
     /// The helper is loaded but its window is not up yet; wait for it.
     Pending,
+    /// A helper from another Hyaline build is loaded; it is left alone until Explorer restarts.
+    Stale,
 }
 
 fn main() -> ExitCode {
@@ -150,11 +164,19 @@ fn apply_settings(listener: HWND) -> Result<(), Box<dyn Error>> {
     let Some(dll) = TAP_DLL.get() else {
         return Ok(());
     };
-    match ensure_tap(dll, SETTINGS.get().needs_helper())? {
+    if RESTARTS.with_borrow(RestartGuard::paused) {
+        // Puts Windows' look back if a helper is still there.
+        return refresh(listener, true);
+    }
+    let needed = SETTINGS.get().needs_helper() && !effect::high_contrast();
+    match ensure_tap(dll, needed)? {
         Ensure::Ready(windows) => {
             ATTEMPT.store(0, Ordering::Relaxed);
             attach(&windows)?;
-            refresh(listener, true)?;
+            // A failing taskbar is retried by the re-apply below; it must not stop Hyaline.
+            if let Err(error) = refresh(listener, true) {
+                eprintln!("hyaline: applying the look failed: {error}");
+            }
             schedule_reapply(listener);
         }
         Ensure::Idle => ATTEMPT.store(0, Ordering::Relaxed),
@@ -164,6 +186,16 @@ fn apply_settings(listener: HWND) -> Result<(), Box<dyn Error>> {
             WAIT_ATTEMPT.store(0, Ordering::Relaxed);
             schedule_wait(listener);
         }
+        Ensure::Stale => {
+            if !STALE_NOTIFIED.replace(true) {
+                tray::notify(
+                    listener,
+                    "Hyaline",
+                    "Restart Explorer or sign out to finish updating Hyaline.",
+                    false,
+                );
+            }
+        }
     }
     Ok(())
 }
@@ -172,6 +204,7 @@ fn apply_settings(listener: HWND) -> Result<(), Box<dyn Error>> {
 fn ensure_tap(dll: &Path, needed: bool) -> Result<Ensure, Box<dyn Error>> {
     let windows = tap_client::find_all();
     if !windows.is_empty() {
+        INJECTED.set(explorer::taskbar_process_id());
         return Ok(Ensure::Ready(windows));
     }
     let Some(explorer) = explorer::taskbar_process_id() else {
@@ -182,6 +215,10 @@ fn ensure_tap(dll: &Path, needed: bool) -> Result<Ensure, Box<dyn Error>> {
         });
     };
     if explorer::has_helper(explorer) {
+        INJECTED.set(Some(explorer));
+        if tap_client::stale_present() {
+            return Ok(Ensure::Stale);
+        }
         // Loaded but its window is not up yet.
         return Ok(Ensure::Pending);
     }
@@ -196,9 +233,14 @@ fn ensure_tap(dll: &Path, needed: bool) -> Result<Ensure, Box<dyn Error>> {
     };
     // HRESULT_FROM_WIN32(ERROR_NOT_FOUND): Explorer's XAML runtime is not up yet.
     let xaml_not_ready = HRESULT((0x8007_0000_u32 | ERROR_NOT_FOUND.cast_unsigned()).cast_signed());
+    // Set before loading: a helper that crashes Explorer while loading makes the call fail.
+    INJECTED.set(Some(explorer));
     match inject::inject(dll, explorer, init) {
         Ok(()) => Ok(Ensure::Pending),
-        Err(error) if error.code() == xaml_not_ready => Ok(Ensure::NotReady),
+        Err(error) if error.code() == xaml_not_ready => {
+            INJECTED.set(None);
+            Ok(Ensure::NotReady)
+        }
         Err(error) => Err(error.into()),
     }
 }
@@ -227,17 +269,43 @@ fn refresh(listener: HWND, force: bool) -> Result<(), Box<dyn Error>> {
     let looks = SETTINGS.get();
     let taskbars = effect::taskbars();
     let observed = observe::observe(&taskbars, watcher::launcher_visible(), watcher::alt_tab());
-    let resolved: Vec<Appearance> = observed.iter().map(|o| looks.resolve(*o)).collect();
+    // High contrast (accessibility) or a crash-loop pause: Windows' look everywhere.
+    let step_aside = effect::high_contrast() || RESTARTS.with_borrow(RestartGuard::paused);
+    let windows_look = Appearance {
+        mode: Mode::Normal,
+        ..Appearance::default()
+    };
+    let resolved: Vec<Appearance> = observed
+        .iter()
+        .map(|o| {
+            if step_aside {
+                windows_look
+            } else {
+                looks.resolve(*o)
+            }
+        })
+        .collect();
     let cleared = resolved.iter().any(|look| look.mode != Mode::Normal);
+    // A taskbar created since the last refresh (monitor plugged in, taskbar recreated) gets
+    // Explorer's accent from Explorer at about the same time as ours.
+    let new_taskbar = APPLIED.with_borrow(|applied| {
+        taskbars
+            .iter()
+            .any(|hwnd| !applied.iter().any(|(h, _)| h == hwnd))
+    });
+    let mut failure: Option<Box<dyn Error>> = None;
     let mut resets_posted = false;
     if cleared {
-        resets_posted = apply_accents(&taskbars, &resolved, force)?;
+        match apply_accents(&taskbars, &resolved, force) {
+            Ok(posted) => resets_posted = posted,
+            Err(error) => failure = Some(error),
+        }
     } else {
         // `Restore` below makes Explorer put back every accent.
         APPLIED.with_borrow_mut(Vec::clear);
     }
     let cleared_changed = CLEARED.get() != Some(cleared);
-    if !force && cleared && (resets_posted || cleared_changed) {
+    if !force && cleared && (resets_posted || cleared_changed || new_taskbar) {
         // Explorer handles the posted reset (or the helper's earlier restore) after this
         // returns and may override the accent just applied; apply once more shortly after.
         schedule_reapply(listener);
@@ -248,18 +316,27 @@ fn refresh(listener: HWND, force: bool) -> Result<(), Box<dyn Error>> {
         } else {
             Command::Restore
         };
+        let mut sent = true;
         for &hwnd in &windows {
-            tap_client::send(hwnd, command)?;
+            if let Err(error) = tap_client::send(hwnd, command) {
+                sent = false;
+                failure.get_or_insert(error.into());
+            }
         }
-        CLEARED.set(Some(cleared));
+        // Unchanged after a failure, so the next refresh sends it again.
+        if sent {
+            CLEARED.set(Some(cleared));
+        }
     }
-    Ok(())
+    failure.map_or(Ok(()), Err)
 }
 
 /// Applies each taskbar's look. A taskbar resolving to Windows' own look while another does
-/// not gets Explorer's accent back (its background stays hidden: shown per monitor in a later
-/// phase). Resetting may make Explorer touch every taskbar, so the others are then re-applied.
-/// Returns whether any reset was posted.
+/// not gets Explorer's accent back (its background stays hidden: per-monitor hiding is not
+/// supported). Resetting may make Explorer touch every taskbar, so the others are then
+/// re-applied. Returns whether any reset was posted. A taskbar that fails is left out of
+/// `APPLIED` (retried on the next refresh) and does not stop the others; the first error is
+/// returned after all were tried.
 fn apply_accents(
     taskbars: &[HWND],
     resolved: &[Appearance],
@@ -279,15 +356,23 @@ fn apply_accents(
             effect::reset(hwnd);
         }
         let reapply_all = force || !resets.is_empty();
-        for (&hwnd, look) in taskbars.iter().zip(resolved) {
-            if look.mode == Mode::Normal || !(reapply_all || changed(hwnd, look)) {
+        let mut done = Vec::with_capacity(taskbars.len());
+        let mut failure = None;
+        for (&hwnd, &look) in taskbars.iter().zip(resolved) {
+            if look.mode != Mode::Normal
+                && (reapply_all || changed(hwnd, &look))
+                && let Err(error) = effect::apply_to(hwnd, &look)
+            {
+                failure.get_or_insert(error);
                 continue;
             }
-            effect::apply_to(hwnd, look)?;
+            done.push((hwnd, look));
         }
-        applied.clear();
-        applied.extend(taskbars.iter().copied().zip(resolved.iter().copied()));
-        Ok(!resets.is_empty())
+        *applied = done;
+        match failure {
+            Some(error) => Err(error.into()),
+            None => Ok(!resets.is_empty()),
+        }
     })
 }
 
@@ -342,6 +427,8 @@ fn try_load(listener: HWND) {
 /// Stores, saves and applies settings changed in the menu.
 fn update(listener: HWND, looks: Looks) {
     SETTINGS.set(looks);
+    // Picking a look is the owner asking to try again after a crash-loop pause.
+    RESTARTS.with_borrow_mut(RestartGuard::reset);
     if let Err(error) = config_file::save(Config { looks }) {
         tray::notify(
             listener,
@@ -413,6 +500,20 @@ fn on_menu(listener: HWND, anchor: bindings::POINT) {
     MENU_OPEN.set(false);
 }
 
+/// Counts a restart of an Explorer that had the helper loaded; says so once if that pauses.
+fn on_explorer_restart(listener: HWND) {
+    let now = u64::try_from(STARTED.with(Instant::elapsed).as_millis()).unwrap_or(u64::MAX);
+    let paused = RESTARTS.with_borrow_mut(|guard| !guard.paused() && guard.record(now));
+    if paused {
+        tray::notify(
+            listener,
+            "Hyaline paused",
+            "Explorer keeps restarting, so Hyaline stepped aside. Change any setting to resume.",
+            true,
+        );
+    }
+}
+
 /// Puts Windows' own look back, removes the icon and quits.
 fn exit(listener: HWND) {
     QUITTING.set(true);
@@ -432,18 +533,19 @@ fn exit(listener: HWND) {
 fn create_listener_window() -> Result<HWND, Box<dyn Error>> {
     // SAFETY: null name = this executable's module.
     let instance = HINSTANCE(unsafe { GetModuleHandleW(PCWSTR::null()) }.0);
-    let class = w!("HyalineHostWindow");
+    let class_name = HSTRING::from(HOST_WINDOW_CLASS);
+    let class = PCWSTR(class_name.as_ptr());
     let window_class = WNDCLASSW {
         lpfnWndProc: Some(window_proc),
         hInstance: instance,
         lpszClassName: class,
         ..Default::default()
     };
-    // SAFETY: `window_class` is fully initialized and its strings are static.
+    // SAFETY: `window_class` is fully initialized; `class_name` outlives both calls.
     if unsafe { RegisterClassW(&raw const window_class) }.0 == 0 {
         return Err(windows_core::Error::from_thread().into());
     }
-    // SAFETY: registered class and static strings; the window is never shown.
+    // SAFETY: registered class and live strings; the window is never shown.
     let hwnd = unsafe {
         CreateWindowExW(
             0,
@@ -473,10 +575,24 @@ unsafe extern "system" fn window_proc(
     lparam: LPARAM,
 ) -> LRESULT {
     if msg == TASKBAR_CREATED.load(Ordering::Relaxed) {
-        // Explorer restarted: it dropped our icon and the helper with it.
+        // Explorer restarted (it dropped our icon and the helper with it), or asks for icons
+        // again without restarting (e.g. after a DPI change): only a new process counts.
         ATTEMPT.store(0, Ordering::Relaxed);
         tray::add(hwnd);
+        let current = explorer::taskbar_process_id();
+        if INJECTED.get().is_some_and(|pid| Some(pid) != current) {
+            INJECTED.set(None);
+            STALE_NOTIFIED.set(false);
+            on_explorer_restart(hwnd);
+        }
         try_load(hwnd);
+        return LRESULT(0);
+    }
+    if msg == HELPER_READY {
+        // Also sent for a new taskbar's helper window (monitor plugged in): attach it too.
+        // SAFETY: our own window and timer id; killing a timer that is not set is harmless.
+        let _ = unsafe { KillTimer(Some(hwnd), WAIT_TIMER) };
+        on_wait(hwnd);
         return LRESULT(0);
     }
     if msg == watcher::RECOMPUTE {
@@ -512,6 +628,17 @@ unsafe extern "system" fn window_proc(
                 eprintln!("hyaline: re-applying the look failed: {error}");
             }
             return LRESULT(0);
+        }
+        WM_SETTINGCHANGE if wparam.0 == SPI_SETHIGHCONTRAST.cast_unsigned() as usize => {
+            // Leaving high contrast may need the helper loaded again.
+            try_load(hwnd);
+            schedule_reapply(hwnd);
+        }
+        WM_POWERBROADCAST
+            if wparam.0 == PBT_APMRESUMEAUTOMATIC.cast_unsigned() as usize
+                || wparam.0 == PBT_APMRESUMESUSPEND.cast_unsigned() as usize =>
+        {
+            schedule_reapply(hwnd);
         }
         // Explorer re-applies its own accent on these; ours must land after it.
         WM_DWMCOMPOSITIONCHANGED | WM_THEMECHANGED | WM_SETTINGCHANGE | WM_DISPLAYCHANGE => {

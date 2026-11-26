@@ -80,3 +80,27 @@ script changes only its own state; situations were configured through `config.to
 | T29 | Turn on Start menu / Search / Task View looks in the menu; open each; also Alt+Tab with the Task View look on | Their looks while open; previous look after closing; Alt+Tab does not show the Task View look | pass (owner, 2026-11-25) |
 | T33 | Default settings, desktop with no maximized window: open the emoji panel (Win+.) or clipboard (Win+V) | Look does not change | pass (owner, 2026-11-25) |
 | T30 | Menu: a situation's submenu — On, Appearance, Color…, Opacity | Changes apply and persist | pass (owner, 2026-11-25) |
+
+## Phase 6 — Hardening + performance
+
+Last run: 2026-11-26, same machine. Timings came from a temporary build that logged each
+refresh (removed afterwards); memory and CPU from `Get-Process`.
+
+| # | Action | Expected | Result |
+|---|---|---|---|
+| T34 | Release build sizes | `hyaline.exe` + `hyaline_tap.dll` < 1 MB | pass (474 KB + 169 KB) |
+| T35 | Restart Hyaline with the helper already loaded, 3 times | First look applied < 150 ms after start | pass (19–21 ms) |
+| T36 | Fresh Explorer, then start Hyaline (helper loaded by this start) | First look applied < 150 ms after start | pass (35 ms; 527 ms before the helper's ready message) |
+| T37 | State switch: time of one refresh after an event | < one frame (16.7 ms) | pass (1.3–4 ms typical, 11.5 ms worst of 40) |
+| T38 | Hyaline private memory | < 5 MB | pass (2.1–2.4 MB) |
+| T39 | Explorer private memory before and after loading the helper (fresh Explorer, 10 s samples) | < 2 MB extra | inconclusive: +0 MB on one run, +2.9 MB on another; Explorer drifts ±1 MB on its own within 30 s. The helper's own data is ~870 tree entries; the rest is Windows' XAML diagnostics |
+| T40 | Desktop in use (mouse moving, apps switching), 30 s | Small | 140–310 ms CPU per 30 s (0.5–1 % of one core). 98 % of event callbacks are cursor moves, which Windows reports as location changes; the shell hook has no maximize notification and a per-process hook still receives them (both tried) |
+| T41 | Static screen, 30 s | No measurable CPU | not re-run: the desktop was in use. No code runs without an event; Phase 5 measured 0 ms (T26) |
+| T42 | Old helper build loaded in Explorer, start this build | No second helper, no commands to the old one, one notice asking to restart Explorer | pass |
+| T43 | Sleep, then wake | Look back within 2 s | pass (owner, 2026-11-26) |
+| T44 | Lock (Win+L), then unlock | Look kept | pass (owner, 2026-11-26) |
+| T45 | Change display scale (Settings → System → Display → Scale), then back | Look kept at each scale | pass (owner, 2026-11-26) |
+| T46 | Change display resolution, then back | Look kept | pass (owner, 2026-11-26) |
+| T47 | Turn high contrast on (Settings → Accessibility → Contrast themes), then off | Windows' own taskbar while on; Hyaline's look back after off | pass (owner, 2026-11-26) |
+| T48 | Plug in, then unplug a second monitor (if available) | The new taskbar gets its look; nothing breaks on unplug | pass (owner, 2026-11-26) |
+| T49 | Optional: with Hyaline running, restart Explorer 3 times within 2 minutes | After the third: Windows' look, one "Hyaline paused" notice; changing a setting brings the look back | pass (owner, 2026-11-26) |

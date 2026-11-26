@@ -4,10 +4,24 @@
 /// Window class of the helper's message-only window inside Explorer.
 pub const WINDOW_CLASS: &str = "HyalineTapWindow";
 
+/// Window class of `hyaline.exe`'s hidden top-level window.
+pub const HOST_WINDOW_CLASS: &str = "HyalineHostWindow";
+
 const WM_APP: u32 = 0x8000;
 const MSG_CLEAR: u32 = WM_APP + 1;
 const MSG_RESTORE: u32 = WM_APP + 2;
 const MSG_ATTACH: u32 = WM_APP + 3;
+const MSG_VERSION: u32 = WM_APP + 4;
+
+/// What the helper answers to [`Command::Version`]. Bump it whenever a command changes meaning:
+/// Explorer keeps a loaded helper until it restarts, so a newer `hyaline.exe` can meet an older
+/// helper (which answers 0, like any window answering an unknown message).
+pub const PROTOCOL_VERSION: usize = 1;
+
+/// Posted by the helper to the host window when one of its windows is created (helper loaded,
+/// or a new taskbar thread such as a plugged-in monitor's), so the host applies the look
+/// right away instead of on its next check.
+pub const HELPER_READY: u32 = WM_APP + 16;
 
 /// A request from `hyaline.exe` to the helper, sent as a window message.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -18,6 +32,8 @@ pub enum Command {
     Restore,
     /// A new host process took over; restore automatically when it exits.
     Attach { host_pid: u32 },
+    /// Asks for the helper's [`PROTOCOL_VERSION`] (the reply value, not a success code).
+    Version,
 }
 
 impl Command {
@@ -28,6 +44,7 @@ impl Command {
             Self::Clear => (MSG_CLEAR, 0),
             Self::Restore => (MSG_RESTORE, 0),
             Self::Attach { host_pid } => (MSG_ATTACH, host_pid as usize),
+            Self::Version => (MSG_VERSION, 0),
         }
     }
 
@@ -41,6 +58,7 @@ impl Command {
                 #[allow(clippy::cast_possible_truncation)] // checked against u32::MAX above
                 host_pid: wparam as u32,
             }),
+            MSG_VERSION => Some(Self::Version),
             _ => None,
         }
     }
@@ -115,6 +133,40 @@ pub const fn retry_delay_ms(attempt: u32) -> Option<u32> {
     if attempt < 120 { Some(500) } else { None }
 }
 
+/// Explorer restarts this close together, while the helper was loaded, look like a crash loop.
+const CRASH_LOOP_RESTARTS: usize = 3;
+const CRASH_LOOP_WINDOW_MS: u64 = 120_000;
+
+/// Stops loading the helper when Explorer keeps restarting with it loaded: the helper may be
+/// the cause, and Windows' own look is always safe.
+#[derive(Debug, Default, Clone)]
+pub struct RestartGuard {
+    recent: Vec<u64>,
+    paused: bool,
+}
+
+impl RestartGuard {
+    /// Records an Explorer restart at `now_ms` (any monotonic clock); returns [`Self::paused`].
+    pub fn record(&mut self, now_ms: u64) -> bool {
+        self.recent
+            .retain(|&at| now_ms.saturating_sub(at) <= CRASH_LOOP_WINDOW_MS);
+        self.recent.push(now_ms);
+        self.paused |= self.recent.len() >= CRASH_LOOP_RESTARTS;
+        self.paused
+    }
+
+    /// Whether loading the helper is paused.
+    #[must_use]
+    pub const fn paused(&self) -> bool {
+        self.paused
+    }
+
+    /// Resumes and forgets past restarts (the owner asked for a look again).
+    pub fn reset(&mut self) {
+        *self = Self::default();
+    }
+}
+
 /// Name of the mutex that keeps `hyaline.exe` to a single instance per session.
 pub const INSTANCE_MUTEX: &str = r"Local\HyalineInstance";
 
@@ -143,6 +195,7 @@ mod tests {
             Command::Clear,
             Command::Restore,
             Command::Attach { host_pid: 4242 },
+            Command::Version,
         ] {
             let (msg, wparam) = c.to_message();
             assert_eq!(Command::from_message(msg, wparam), Some(c));
@@ -154,7 +207,52 @@ mod tests {
     #[test]
     fn unknown_message_is_not_a_command() {
         assert_eq!(Command::from_message(0x0010, 0), None); // WM_CLOSE
-        assert_eq!(Command::from_message(0x8004, 0), None);
+        assert_eq!(Command::from_message(0x8005, 0), None);
+    }
+
+    #[test]
+    fn version_query_is_a_command() {
+        assert_eq!(Command::Version.to_message(), (0x8004, 0));
+        assert_eq!(Command::from_message(0x8004, 0), Some(Command::Version));
+        assert_eq!(PROTOCOL_VERSION, 1);
+    }
+
+    #[test]
+    fn two_explorer_restarts_do_not_pause() {
+        let mut guard = RestartGuard::default();
+        assert!(!guard.record(1_000));
+        assert!(!guard.record(2_000));
+        assert!(!guard.paused());
+    }
+
+    #[test]
+    fn third_restart_within_two_minutes_pauses() {
+        let mut guard = RestartGuard::default();
+        guard.record(0);
+        guard.record(60_000);
+        assert!(guard.record(120_000));
+        assert!(guard.paused());
+    }
+
+    #[test]
+    fn restarts_spread_over_more_than_two_minutes_do_not_pause() {
+        let mut guard = RestartGuard::default();
+        for now in [0, 70_000, 140_000, 210_000, 280_000] {
+            assert!(!guard.record(now), "{now}");
+        }
+    }
+
+    #[test]
+    fn pause_lasts_until_reset() {
+        let mut guard = RestartGuard::default();
+        for now in [0, 1, 2] {
+            guard.record(now);
+        }
+        assert!(guard.record(10_000_000));
+        guard.reset();
+        assert!(!guard.paused());
+        assert!(!guard.record(10_000_001));
+        assert!(!guard.record(10_000_002));
     }
 
     #[test]

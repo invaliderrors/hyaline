@@ -4,13 +4,17 @@
 
 use crate::background;
 use crate::bindings::{
-    CloseHandle, CreateWindowExW, DefWindowProcW, EnumWindows, GetClassNameW, GetCurrentProcessId,
-    GetModuleHandleW, GetWindowThreadProcessId, HANDLE, HINSTANCE, HWND, HWND_MESSAGE, INFINITE,
-    LPARAM, LRESULT, OpenProcess, PostMessageW, RegisterClassW, RegisterWaitForSingleObject,
-    SYNCHRONIZE, UnregisterWait, WM_DWMCOMPOSITIONCHANGED, WNDCLASSW, WPARAM, WT_EXECUTEONLYONCE,
+    CloseHandle, CreateWindowExW, DefWindowProcW, EnumWindows, FindWindowW, GetClassNameW,
+    GetCurrentProcessId, GetModuleHandleW, GetWindowThreadProcessId, HANDLE, HINSTANCE, HWND,
+    HWND_MESSAGE, INFINITE, LPARAM, LRESULT, OpenProcess, PostMessageW, RegisterClassW,
+    RegisterWaitForSingleObject, SYNCHRONIZE, UnregisterWait, WM_DWMCOMPOSITIONCHANGED, WNDCLASSW,
+    WPARAM, WT_EXECUTEONLYONCE,
 };
 use crate::guard::guard;
-use hyaline_core::tap::{Command, WINDOW_CLASS, is_taskbar_window_class};
+use hyaline_core::tap::{
+    Command, HELPER_READY, HOST_WINDOW_CLASS, PROTOCOL_VERSION, WINDOW_CLASS,
+    is_taskbar_window_class,
+};
 use std::cell::{Cell, RefCell};
 use std::ffi::c_void;
 use std::sync::atomic::{AtomicU32, Ordering};
@@ -90,6 +94,18 @@ pub fn ensure() {
     if !watch_host(hwnd, HOST_PID.load(Ordering::Relaxed)) {
         restore();
     }
+    notify_host();
+}
+
+/// Tells the host a helper window now exists, so it applies the look without waiting.
+fn notify_host() {
+    let class = HSTRING::from(HOST_WINDOW_CLASS);
+    // SAFETY: the class name outlives the call.
+    let host = unsafe { FindWindowW(PCWSTR(class.as_ptr()), PCWSTR::null()) };
+    if !host.0.is_null() {
+        // SAFETY: posting to another process's window; failure only delays the host.
+        let _ = unsafe { PostMessageW(Some(host), HELPER_READY, WPARAM(0), LPARAM(0)) };
+    }
 }
 
 /// Puts the taskbar back to Windows' default: shows the XAML background and has Explorer
@@ -147,14 +163,18 @@ unsafe extern "system" fn window_proc(
     lparam: LPARAM,
 ) -> LRESULT {
     guard(LRESULT(1), || match Command::from_message(msg, wparam.0) {
+        Some(Command::Version) => LRESULT(PROTOCOL_VERSION.cast_signed()),
         Some(command) => LRESULT(isize::from(!handle(hwnd, command))),
         // SAFETY: the unmodified message goes to the default procedure.
         None => unsafe { DefWindowProcW(hwnd, msg, wparam, lparam) },
     })
 }
 
+/// Applies a command; returns whether it succeeded.
 fn handle(hwnd: HWND, command: Command) -> bool {
     match command {
+        // Answered with the version itself in `window_proc`.
+        Command::Version => true,
         Command::Clear => background::set_cleared(true),
         Command::Restore => restore(),
         Command::Attach { host_pid } => {

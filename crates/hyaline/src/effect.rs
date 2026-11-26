@@ -2,8 +2,9 @@
 //! `user32.dll` export (not in the Windows metadata, so it is loaded by name).
 
 use crate::bindings::{
-    E_FAIL, EnumWindows, GetClassNameW, GetModuleHandleW, GetProcAddress, HWND, LPARAM,
-    PostMessageW, WM_DWMCOMPOSITIONCHANGED, WPARAM,
+    E_FAIL, EnumWindows, GetClassNameW, GetModuleHandleW, GetProcAddress, HCF_HIGHCONTRASTON,
+    HIGHCONTRASTW, HWND, LPARAM, PostMessageW, SPI_GETHIGHCONTRAST, SystemParametersInfoW,
+    WM_DWMCOMPOSITIONCHANGED, WPARAM,
 };
 use hyaline_core::appearance::{AccentPolicy, Appearance, WCA_ACCENT_POLICY};
 use hyaline_core::tap::is_taskbar_window_class;
@@ -90,4 +91,22 @@ pub fn reset(taskbar: HWND) {
             LPARAM(0),
         )
     };
+}
+
+/// Whether high contrast is on: Hyaline then leaves every taskbar to Windows.
+pub fn high_contrast() -> bool {
+    let mut info = HIGHCONTRASTW {
+        cbSize: u32::try_from(size_of::<HIGHCONTRASTW>()).unwrap_or(0),
+        ..Default::default()
+    };
+    // SAFETY: `info` is a correctly sized HIGHCONTRASTW, as SPI_GETHIGHCONTRAST requires.
+    let read = unsafe {
+        SystemParametersInfoW(
+            SPI_GETHIGHCONTRAST.cast_unsigned(),
+            info.cbSize,
+            (&raw mut info).cast(),
+            0,
+        )
+    };
+    read.as_bool() && info.dwFlags & HCF_HIGHCONTRASTON.cast_unsigned() != 0
 }
