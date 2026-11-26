@@ -24,7 +24,7 @@ Last run: 2026-11-25, Windows 11 build 26300, one 1920×1080 monitor, transparen
 | # | Action | Expected | Result |
 |---|---|---|---|
 | T1 | Run `hyaline.exe` | Taskbar background cleared; Explorer PID unchanged | pass |
-| T2 | Hover a taskbar button to show thumbnails | Flyout keeps its background | pass |
+| T2 | Hover a taskbar button to show thumbnails | Flyout keeps its background | pass before the target type check was added; automated re-run could not open the popup (the change only narrows matching and is unit-tested) |
 | T3 | `taskkill /im hyaline.exe /f` | Default taskbar (`#1C1C1C`) back within 1 s; Explorer PID unchanged | pass (failed first: fixed by hiding via `Opacity`) |
 | T4 | Run `hyaline.exe` again | Background cleared again; exactly one `hyaline_tap.dll` in Explorer | pass |
 | T5 | With Hyaline running, restart Explorer | New Explorer PID; helper loaded again and background cleared within 20 s (Explorer's XAML needs ~11 s) | pass (12 s; failed first: fixed by retrying until Explorer is ready) |
