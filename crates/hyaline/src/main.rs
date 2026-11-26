@@ -29,13 +29,14 @@ use bindings::{
 use hyaline_core::appearance::{Appearance, Mode};
 use hyaline_core::config::Config;
 use hyaline_core::states::{Looks, Situation, Toggled};
-use hyaline_core::tap::{Command, INSTANCE_MUTEX, InitData, retry_delay_ms};
+use hyaline_core::tap::{Command, INSTANCE_MUTEX, InitData, RestartGuard, retry_delay_ms};
 use std::cell::{Cell, RefCell};
 use std::error::Error;
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 use std::sync::OnceLock;
 use std::sync::atomic::{AtomicU32, Ordering};
+use std::time::Instant;
 use windows_core::{HRESULT, HSTRING, PCWSTR, w};
 
 static TAP_DLL: OnceLock<PathBuf> = OnceLock::new();
@@ -63,6 +64,12 @@ thread_local! {
     /// True while the tray menu or the color picker is open (they run nested message loops,
     /// so another icon click could otherwise open a second one).
     static MENU_OPEN: Cell<bool> = const { Cell::new(false) };
+    /// Whether the running Explorer has the helper loaded (so its restart may be our fault).
+    static INJECTED: Cell<bool> = const { Cell::new(false) };
+    static RESTARTS: RefCell<RestartGuard> = RefCell::new(RestartGuard::default());
+    static STARTED: Instant = Instant::now();
+    /// Whether the "older helper loaded" notice was shown for the running Explorer.
+    static STALE_NOTIFIED: Cell<bool> = const { Cell::new(false) };
 }
 
 /// Outcome of [`ensure_tap`].
@@ -75,6 +82,8 @@ enum Ensure {
     NotReady,
     /// The helper is loaded but its window is not up yet; wait for it.
     Pending,
+    /// A helper from another Hyaline build is loaded; it is left alone until Explorer restarts.
+    Stale,
 }
 
 fn main() -> ExitCode {
@@ -150,6 +159,9 @@ fn apply_settings(listener: HWND) -> Result<(), Box<dyn Error>> {
     let Some(dll) = TAP_DLL.get() else {
         return Ok(());
     };
+    if RESTARTS.with_borrow(RestartGuard::paused) {
+        return Ok(());
+    }
     match ensure_tap(dll, SETTINGS.get().needs_helper())? {
         Ensure::Ready(windows) => {
             ATTEMPT.store(0, Ordering::Relaxed);
@@ -164,6 +176,16 @@ fn apply_settings(listener: HWND) -> Result<(), Box<dyn Error>> {
             WAIT_ATTEMPT.store(0, Ordering::Relaxed);
             schedule_wait(listener);
         }
+        Ensure::Stale => {
+            if !STALE_NOTIFIED.replace(true) {
+                tray::notify(
+                    listener,
+                    "Hyaline",
+                    "Restart Explorer or sign out to finish updating Hyaline.",
+                    false,
+                );
+            }
+        }
     }
     Ok(())
 }
@@ -172,6 +194,7 @@ fn apply_settings(listener: HWND) -> Result<(), Box<dyn Error>> {
 fn ensure_tap(dll: &Path, needed: bool) -> Result<Ensure, Box<dyn Error>> {
     let windows = tap_client::find_all();
     if !windows.is_empty() {
+        INJECTED.set(true);
         return Ok(Ensure::Ready(windows));
     }
     let Some(explorer) = explorer::taskbar_process_id() else {
@@ -182,6 +205,10 @@ fn ensure_tap(dll: &Path, needed: bool) -> Result<Ensure, Box<dyn Error>> {
         });
     };
     if explorer::has_helper(explorer) {
+        INJECTED.set(true);
+        if tap_client::stale_present() {
+            return Ok(Ensure::Stale);
+        }
         // Loaded but its window is not up yet.
         return Ok(Ensure::Pending);
     }
@@ -197,7 +224,10 @@ fn ensure_tap(dll: &Path, needed: bool) -> Result<Ensure, Box<dyn Error>> {
     // HRESULT_FROM_WIN32(ERROR_NOT_FOUND): Explorer's XAML runtime is not up yet.
     let xaml_not_ready = HRESULT((0x8007_0000_u32 | ERROR_NOT_FOUND.cast_unsigned()).cast_signed());
     match inject::inject(dll, explorer, init) {
-        Ok(()) => Ok(Ensure::Pending),
+        Ok(()) => {
+            INJECTED.set(true);
+            Ok(Ensure::Pending)
+        }
         Err(error) if error.code() == xaml_not_ready => Ok(Ensure::NotReady),
         Err(error) => Err(error.into()),
     }
@@ -342,6 +372,8 @@ fn try_load(listener: HWND) {
 /// Stores, saves and applies settings changed in the menu.
 fn update(listener: HWND, looks: Looks) {
     SETTINGS.set(looks);
+    // Picking a look is the owner asking to try again after a crash-loop pause.
+    RESTARTS.with_borrow_mut(RestartGuard::reset);
     if let Err(error) = config_file::save(Config { looks }) {
         tray::notify(
             listener,
@@ -413,6 +445,20 @@ fn on_menu(listener: HWND, anchor: bindings::POINT) {
     MENU_OPEN.set(false);
 }
 
+/// Counts a restart of an Explorer that had the helper loaded; says so once if that pauses.
+fn on_explorer_restart(listener: HWND) {
+    let now = u64::try_from(STARTED.with(Instant::elapsed).as_millis()).unwrap_or(u64::MAX);
+    let paused = RESTARTS.with_borrow_mut(|guard| !guard.paused() && guard.record(now));
+    if paused {
+        tray::notify(
+            listener,
+            "Hyaline paused",
+            "Explorer keeps restarting, so Hyaline stepped aside. Change any setting to resume.",
+            true,
+        );
+    }
+}
+
 /// Puts Windows' own look back, removes the icon and quits.
 fn exit(listener: HWND) {
     QUITTING.set(true);
@@ -475,7 +521,11 @@ unsafe extern "system" fn window_proc(
     if msg == TASKBAR_CREATED.load(Ordering::Relaxed) {
         // Explorer restarted: it dropped our icon and the helper with it.
         ATTEMPT.store(0, Ordering::Relaxed);
+        STALE_NOTIFIED.set(false);
         tray::add(hwnd);
+        if INJECTED.replace(false) {
+            on_explorer_restart(hwnd);
+        }
         try_load(hwnd);
         return LRESULT(0);
     }
