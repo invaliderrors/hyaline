@@ -97,10 +97,10 @@ refresh (removed afterwards); memory and CPU from `Get-Process`.
 | T40 | Desktop in use (mouse moving, apps switching), 30 s | Small | 140–310 ms CPU per 30 s (0.5–1 % of one core). 98 % of event callbacks are cursor moves, which Windows reports as location changes; the shell hook has no maximize notification and a per-process hook still receives them (both tried) |
 | T41 | Static screen, 30 s | No measurable CPU | not re-run: the desktop was in use. No code runs without an event; Phase 5 measured 0 ms (T26) |
 | T42 | Old helper build loaded in Explorer, start this build | No second helper, no commands to the old one, one notice asking to restart Explorer | pass |
-| T43 | Sleep, then wake | Look back within 2 s | owner check |
-| T44 | Lock (Win+L), then unlock | Look kept | owner check |
-| T45 | Change display scale (Settings → System → Display → Scale), then back | Look kept at each scale | owner check |
-| T46 | Change display resolution, then back | Look kept | owner check |
-| T47 | Turn high contrast on (Settings → Accessibility → Contrast themes), then off | Windows' own taskbar while on; Hyaline's look back after off | owner check |
-| T48 | Plug in, then unplug a second monitor (if available) | The new taskbar gets its look; nothing breaks on unplug | owner check (only if a monitor is available) |
-| T49 | Optional: with Hyaline running, restart Explorer 3 times within 2 minutes | After the third: Windows' look, one "Hyaline paused" notice; changing a setting brings the look back | owner check (optional) |
+| T43 | Sleep, then wake | Look back within 2 s | pass (owner, 2026-11-26) |
+| T44 | Lock (Win+L), then unlock | Look kept | pass (owner, 2026-11-26) |
+| T45 | Change display scale (Settings → System → Display → Scale), then back | Look kept at each scale | pass (owner, 2026-11-26) |
+| T46 | Change display resolution, then back | Look kept | pass (owner, 2026-11-26) |
+| T47 | Turn high contrast on (Settings → Accessibility → Contrast themes), then off | Windows' own taskbar while on; Hyaline's look back after off | pass (owner, 2026-11-26) |
+| T48 | Plug in, then unplug a second monitor (if available) | The new taskbar gets its look; nothing breaks on unplug | pass (owner, 2026-11-26) |
+| T49 | Optional: with Hyaline running, restart Explorer 3 times within 2 minutes | After the third: Windows' look, one "Hyaline paused" notice; changing a setting brings the look back | pass (owner, 2026-11-26) |
