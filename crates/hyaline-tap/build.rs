@@ -2,6 +2,11 @@
 
 fn main() {
     println!("cargo:rerun-if-changed=build.rs");
+    println!("cargo:rerun-if-changed=exports.def");
+    // COM entry points must be PRIVATE exports (LNK4104 otherwise).
+    let def =
+        std::path::Path::new(&std::env::var("CARGO_MANIFEST_DIR").unwrap()).join("exports.def");
+    println!("cargo:rustc-cdylib-link-arg=/DEF:{}", def.display());
     windows_bindgen::bindgen([
         "--out",
         "src/bindings.rs",
