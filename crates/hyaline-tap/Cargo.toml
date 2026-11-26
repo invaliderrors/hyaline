@@ -11,3 +11,10 @@ crate-type = ["cdylib"]
 
 [lints]
 workspace = true
+
+[dependencies]
+hyaline-core = { version = "0.0.0", path = "../hyaline-core" }
+windows-core = "0.100.0"
+
+[build-dependencies]
+windows-bindgen = "0.100.0"
