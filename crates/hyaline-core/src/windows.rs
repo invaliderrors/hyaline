@@ -46,6 +46,33 @@ pub const fn classify(facts: WindowFacts) -> Option<WindowKind> {
     }
 }
 
+/// Shell surfaces detected from the foreground window.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct Foreground {
+    pub start: bool,
+    pub search: bool,
+    pub task_view: bool,
+}
+
+/// Classifies the foreground window by class and process name (Windows 11, measured in
+/// `docs/research/win11-taskbar.md` §7). `launcher_visible` comes from `IAppVisibility`; Start
+/// is hosted by the same `SearchHost.exe` window as Search, so the flag tells them apart.
+#[must_use]
+pub fn foreground(class: &str, exe: &str, launcher_visible: bool) -> Foreground {
+    if launcher_visible {
+        return Foreground {
+            start: true,
+            ..Foreground::default()
+        };
+    }
+    let exe = exe.to_ascii_lowercase();
+    Foreground {
+        start: false,
+        search: class == "Windows.UI.Core.CoreWindow" && exe == "searchhost.exe",
+        task_view: class == "XamlExplorerHostIslandWindow" && exe == "explorer.exe",
+    }
+}
+
 /// Window classes of the desktop and the taskbars, which never count as windows.
 #[must_use]
 pub fn is_shell_class(class: &str) -> bool {
@@ -122,6 +149,55 @@ mod tests {
         for facts in exclusions {
             assert_eq!(classify(facts), None, "{facts:?}");
         }
+    }
+
+    #[test]
+    fn foreground_search_host_is_start_or_search() {
+        let host = ("Windows.UI.Core.CoreWindow", "SearchHost.exe");
+        assert_eq!(
+            foreground(host.0, host.1, true),
+            Foreground {
+                start: true,
+                ..Foreground::default()
+            }
+        );
+        assert_eq!(
+            foreground(host.0, host.1, false),
+            Foreground {
+                search: true,
+                ..Foreground::default()
+            }
+        );
+    }
+
+    #[test]
+    fn foreground_task_view_is_recognized() {
+        assert_eq!(
+            foreground("XamlExplorerHostIslandWindow", "explorer.exe", false),
+            Foreground {
+                task_view: true,
+                ..Foreground::default()
+            }
+        );
+        assert_eq!(
+            foreground("XamlExplorerHostIslandWindow", "other.exe", false),
+            Foreground::default()
+        );
+    }
+
+    #[test]
+    fn launcher_flag_alone_means_start() {
+        assert_eq!(
+            foreground("Chrome_WidgetWin_1", "chrome.exe", true),
+            Foreground {
+                start: true,
+                ..Foreground::default()
+            }
+        );
+        assert_eq!(
+            foreground("Chrome_WidgetWin_1", "chrome.exe", false),
+            Foreground::default()
+        );
     }
 
     #[test]
